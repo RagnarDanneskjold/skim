@@ -75,7 +75,7 @@ func IsNil(a Atom) bool {
 	}
 	switch a := a.(type) {
 	case *Cons:
-		return a == nil || a.Cdr == nil && a.Car == nil
+		return a == nil || (a.Cdr == nil && a.Car == nil)
 	default:
 		return false
 	}
