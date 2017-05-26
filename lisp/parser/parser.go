@@ -25,23 +25,13 @@ type scope struct {
 	tail *skim.Cons
 }
 
-func newScope(up *scope, open bool, root *skim.Cons) *scope {
-	var tail *skim.Cons
-	var last *skim.Cons
-	if root == nil {
-		root = new(skim.Cons)
-		tail = root
-	} else {
-		tail = new(skim.Cons)
-		root.Cdr = tail
-		last = root
-	}
+func newScope(up *scope, open bool) *scope {
+	root := new(skim.Cons)
 	s := &scope{
 		up:   up,
 		open: open,
 		root: root,
-		tail: tail,
-		last: last,
+		tail: root,
 	}
 	return s
 }
@@ -313,12 +303,12 @@ func (d *decoder) unimplemented() (nextfunc, error) {
 }
 
 func (d *decoder) readList() (next nextfunc, err error) {
-	d.push(scopeBraced, nil)
+	d.push(scopeBraced)
 	return d.readSyntax, d.skip()
 }
 
-func (d *decoder) push(open bool, root *skim.Cons) *scope {
-	s := newScope(d.last, open, root)
+func (d *decoder) push(open bool) *scope {
+	s := newScope(d.last, open)
 	d.last = s
 	return d.last
 }
@@ -336,7 +326,7 @@ func (d *decoder) readLiteral() (next nextfunc, err error) {
 	}
 
 	// ok:
-	d.push(scopeQuoted, nil)
+	d.push(scopeQuoted)
 	d.last.append(sym)
 	return d.readSyntax, d.skip()
 }
@@ -357,7 +347,7 @@ func (d *decoder) readComment() (next nextfunc, err error) {
 func (d *decoder) reset(r io.Reader) {
 	const defaultBufferCap = 64
 
-	d.root = *newScope(nil, false, nil)
+	d.root = *newScope(nil, false)
 	d.last = &d.root
 
 	if rx, ok := r.(runeReader); ok {
