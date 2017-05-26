@@ -1,193 +1,65 @@
-package main
+package parser
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"log"
-	"os"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"go.spiff.io/skim/lisp/skim"
 )
-
-func main() {
-	var dec decoder
-	dec.reset(os.Stdin)
-	if err := dec.read(); err != nil {
-		log.Fatal("decode: ", err)
-	}
-
-	root := dec.root.Atom.(*List).Atoms
-	for _, a := range root {
-		fmt.Printf("%#v\n", a)
-	}
-
-	log.Print("done")
-}
-
-// Atom defines any value understood to be a member of a skim list, including lists themselves.
-type Atom interface {
-	// SkimAtom is an empty method -- it exists only to mark a type as an Atom at compile time.
-	SkimAtom()
-	String() string
-}
-
-type goStringer interface {
-	GoString() string
-}
-
-type Int int64
-
-func (Int) SkimAtom()          {}
-func (i Int) String() string   { return strconv.FormatInt(int64(i), 10) }
-func (i Int) GoString() string { return "int{" + i.String() + "}" }
-
-type Float float64
-
-func (Float) SkimAtom()          {}
-func (f Float) String() string   { return strconv.FormatFloat(float64(f), 'f', -1, 64) }
-func (f Float) GoString() string { return "float{" + f.String() + "}" }
-
-type Symbol string
-
-func (Symbol) SkimAtom() {}
-
-func (s Symbol) String() string   { return string(s) }
-func (s Symbol) GoString() string { return "sym{" + s.String() + "}" }
-
-type List struct{ Atoms []Atom }
-
-func (l *List) String() string {
-	return l.string(false)
-}
-
-func (l *List) GoString() string {
-	return l.string(true)
-}
-
-func (l *List) string(gostring bool) string {
-	if l == nil {
-		return "nil"
-	} else if len(l.Atoms) == 0 {
-		return "()"
-	}
-
-	// Render quoted list forms specially
-	if gostring {
-		// nop
-	} else if sym, ok := l.Atoms[0].(Symbol); ok && len(l.Atoms) == 2 {
-		switch sym {
-		case Symbol("quote"):
-			return "'" + l.Atoms[1].String()
-		case Symbol("quasiquote"):
-			return "`" + l.Atoms[1].String()
-		case Symbol("unquote"):
-			return "," + l.Atoms[1].String()
-		}
-	}
-
-	descs := make([]string, len(l.Atoms))
-	for i, v := range l.Atoms {
-		if !gostring {
-		} else if gv, ok := v.(goStringer); ok {
-			descs[i] = gv.GoString()
-			continue
-		}
-		descs[i] = v.String()
-	}
-	return "(" + strings.Join(descs, " ") + ")"
-}
-
-func (List) SkimAtom() {}
-
-type QuoteKind rune
-
-const (
-	QLiteral    QuoteKind = '\''
-	QQuasiquote QuoteKind = '`'
-	QUnquote    QuoteKind = ','
-)
-
-func (q QuoteKind) symbol() Symbol {
-	switch q {
-	case QLiteral:
-		return Symbol("quote")
-	case QQuasiquote:
-		return Symbol("quasiquote")
-	case QUnquote:
-		return Symbol("unquote")
-	}
-	return Symbol("#error:bad-quote/" + strconv.Itoa(int(q)))
-}
-
-type Quote struct {
-	Kind QuoteKind
-	Atom
-}
-
-func (l *Quote) getAtom() Atom {
-	if l == nil {
-		return nil
-	}
-	return l.Atom
-}
-
-func (l *Quote) String() string {
-	if l.getAtom() == nil {
-		return "'#error:nil"
-	}
-	return string(l.Kind) + l.Atom.String()
-}
-func (l *Quote) GoString() string {
-	if a, ok := l.getAtom().(goStringer); ok {
-		return string(l.Kind) + a.GoString()
-	}
-	return l.String()
-}
-
-func (*Quote) SkimAtom() {}
-
-type String string
-
-func (String) SkimAtom()          {}
-func (s String) String() string   { return string(s) }
-func (s String) GoString() string { return strconv.QuoteToASCII(s.String()) }
 
 // nextfunc is a parsing function that modifies the decoder's state and returns another parsing
 // function. If nextfunc returns io.EOF, parsing is complete. Any other error halts parsing.
 type nextfunc func() (nextfunc, error)
 
 type scope struct {
-	up *scope
-	Atom
+	up   *scope
+	open bool // if true, requires a closing parenthesis
+	root *skim.Cons
+	last *skim.Cons
+	tail *skim.Cons
 }
 
-func (s *scope) append(tip Atom) error {
-	switch atom := s.Atom.(type) {
-	case *List:
-		atom.Atoms = append(atom.Atoms, tip)
-	case *Quote:
-		atom.Atom = tip
-	default:
-		return fmt.Errorf("skim: attempt to add atom to non-list type %T", atom)
+func newScope(up *scope, open bool, root *skim.Cons) *scope {
+	var tail *skim.Cons
+	var last *skim.Cons
+	if root == nil {
+		root = new(skim.Cons)
+		tail = root
+	} else {
+		tail = new(skim.Cons)
+		root.Cdr = tail
+		last = root
 	}
-	return nil
+	s := &scope{
+		up:   up,
+		open: open,
+		root: root,
+		tail: tail,
+		last: last,
+	}
+	return s
 }
 
-func (s *scope) ascend() (parentScope, containerScope *scope) {
-	if s == nil || s.up == nil {
-		return s, nil
+func (s *scope) cons() *skim.Cons {
+	if s.last != nil {
+		s.last.Cdr = nil
 	}
-	// Never hop more than one literal up
-	if _, ok := s.up.Atom.(*Quote); ok {
-		log.Print("return grandparent: ", s.up.up, "; grandchild: ", s)
-		return s.up.up, s.up
+	return s.root
+}
+
+func (s *scope) append(tip skim.Atom) {
+	if skim.IsNil(tip) && !s.open {
+		tip = nil
 	}
-	log.Print("return parent: ", s.up, "; child: ", s)
-	return s.up, s.up
+	next := new(skim.Cons)
+	s.tail.Car, s.tail.Cdr = tip, next
+	s.last, s.tail = s.tail, next
 }
 
 // decoder is a wrapper around an io.Reader for the purpose of doing by-rune parsing of INI file
@@ -210,7 +82,8 @@ type decoder struct {
 	next     rune
 	nexterr  error
 
-	last, root *scope
+	root scope
+	last *scope
 }
 
 const (
@@ -249,27 +122,7 @@ func (d *decoder) readSyntax() (next nextfunc, err error) {
 		return d.readSymbol, nil
 	}
 
-	log.Printf("%q -> unimplemented", d.current)
 	return nil, errors.New("unimplemented")
-}
-
-func isQuote(a Atom, kind QuoteKind) bool {
-	switch a := a.(type) {
-	case *Quote:
-		return a.Kind == kind
-	case *List:
-		return len(a.Atoms) > 0 && a.Atoms[0] == kind.symbol()
-	}
-	return false
-}
-
-func (d *decoder) inQuote(kind QuoteKind) bool {
-	for up := d.last; up != nil && up != d.root; up = up.up {
-		if isQuote(up.Atom, kind) {
-			return true
-		}
-	}
-	return false
 }
 
 func (d *decoder) readHexCode(size int) (result rune, err error) {
@@ -309,7 +162,6 @@ func (d *decoder) readString() (next nextfunc, err error) {
 
 	switch d.current {
 	case '"':
-		log.Print("end of string")
 		// done
 
 	case '\\':
@@ -333,13 +185,34 @@ func (d *decoder) readString() (next nextfunc, err error) {
 	}
 
 	defer stopOnEOF(&next, &err)
-	return d.claimAtom(String(d.buffer.String()), d.readSyntax, d.skip())
+
+	d.last.append(skim.String(d.buffer.String()))
+	return d.readSyntax, d.skip()
 }
 
-var sentinelRunes = runestr("()'\",`")
+var sentinelRunes = runestr("()'\",`;")
 
 func isSymbolic(r rune) bool {
 	return unicode.IsSpace(r) || sentinelRunes.Contains(r)
+}
+
+func (d *decoder) assign(a skim.Atom, close bool, next nextfunc, err error) (nextfunc, error) {
+	if err != nil {
+		return nil, err
+	} else if d.last.up == nil && close {
+		return nil, fmt.Errorf("cannot close current scope")
+	}
+
+	if a != nil {
+		d.last.append(a)
+	}
+
+	for ; d.last.up != nil && d.last.open == close; close = false {
+		d.last.up.append(d.last.cons())
+		d.last = d.last.up
+	}
+
+	return next, nil
 }
 
 func (d *decoder) readSymbol() (next nextfunc, err error) {
@@ -350,9 +223,9 @@ func (d *decoder) readSymbol() (next nextfunc, err error) {
 	}
 
 	txt := d.buffer.String()
-	log.Printf("numeric: %q", txt)
 	n := len(txt)
 
+	// Try numbers
 	zero := n > 0 && txt[0] == '0'
 	if zero && n > 1 {
 		var integer int64
@@ -365,42 +238,74 @@ func (d *decoder) readSymbol() (next nextfunc, err error) {
 		}
 
 		if err == nil {
-			return d.claimAtom(Int(integer), d.readSyntax, nil)
+			return d.assign(skim.Int(integer), false, d.readSyntax, nil)
 		}
 	} else if zero { // literal zero
-		return d.claimAtom(Int(0), d.readSyntax, nil)
+		return d.assign(skim.Int(0), true, d.readSyntax, nil)
 	}
 
 next:
 	integer, err := strconv.ParseInt(txt, 10, 64) // decimal (10)
 	if err == nil {
-		return d.claimAtom(Int(integer), d.readSyntax, nil)
+		return d.assign(skim.Int(integer), false, d.readSyntax, nil)
 	}
 
 	// float (10)
 	fp, err := strconv.ParseFloat(txt, 64)
 	if err == nil {
-		return d.claimAtom(Float(fp), d.readSyntax, nil)
+		d.last.append(skim.Float(fp))
+		return d.assign(skim.Float(fp), false, d.readSyntax, nil)
 	}
 
-	return d.claimAtom(Symbol(txt), d.readSyntax, nil)
-}
+	var a skim.Atom
+	if strings.HasPrefix(txt, "#") {
+		switch txt {
+		case "#t", "#f":
+			a = skim.Bool(txt == "#t")
+		default:
+			return nil, d.syntaxerr(fmt.Errorf("invalid token", txt))
+		}
+	} else if strings.HasPrefix(txt, "<<<") && d.current == '\n' && len(txt) > 3 {
+		// HEREDOC
+		d.buffer.Reset()
+		end := []byte(txt[3:])
 
-func (d *decoder) claimAtom(a Atom, next nextfunc, err error) (nextfunc, error) {
-	d.last = &scope{up: d.last, Atom: a}
-	return d.ascend(d.assign(next, err))
+		for {
+			err = d.readUntil(runeFunc(isSymbolic), true, nil)
+			buf := d.buffer.Bytes()
+			if (err == io.EOF || err == nil) && bytes.HasSuffix(buf, end) {
+				buf = buf[:len(buf)-len(end)]
+				if len(buf) == 0 || buf[len(buf)-1] == '\n' {
+					a = skim.String(buf)
+					break
+				}
+			} else if err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				return nil, err
+			}
+			d.buffer.WriteRune(d.current)
+		}
+
+	} else {
+		a = skim.Symbol(txt)
+	}
+
+	return d.assign(a, false, d.readSyntax, nil)
 }
 
 func (d *decoder) closeList() (next nextfunc, err error) {
-	if _, ok := d.last.Atom.(*List); !ok {
-		return nil, d.syntaxerr(errors.New("unexpected ')'"))
+	err = d.skip()
+	if !d.last.open {
+		return nil, d.syntaxerr(BadCharError(')'))
 	}
 
-	err = d.skip()
-	if up, _ := d.last.ascend(); up == d.root && err == io.EOF {
+	if err == io.EOF {
 		err = nil
 	}
-	return d.ascend(d.assign(d.readSyntax, err))
+
+	return d.assign(nil, true, d.readSyntax, err)
 }
 
 func (d *decoder) unimplemented() (nextfunc, error) {
@@ -408,65 +313,31 @@ func (d *decoder) unimplemented() (nextfunc, error) {
 }
 
 func (d *decoder) readList() (next nextfunc, err error) {
-	d.last = &scope{up: d.last, Atom: &List{}}
+	d.push(scopeBraced, nil)
 	return d.readSyntax, d.skip()
 }
 
-func (d *decoder) ascend(next nextfunc, err error) (nextfunc, error) {
-	if err != nil {
-		return nil, err
-	}
-
-	up, _ := d.last.ascend()
-	if up == d.last {
-		return nil, fmt.Errorf("attempt to ascend scope without parent scope")
-	}
-	d.last = up
-	return next, nil
+func (d *decoder) push(open bool, root *skim.Cons) *scope {
+	s := newScope(d.last, open, root)
+	d.last = s
+	return d.last
 }
 
-func (d *decoder) assign(next nextfunc, err error) (nextfunc, error) {
-	if err != nil {
-		return nil, err
-	}
-
-	s := d.last
-	up, container := s.ascend()
-	if up == s || container == s {
-		return nil, fmt.Errorf("attempt to assign atom without parent scope")
-	}
-	log.Printf("%#+v", container)
-	if err := container.append(s.Atom); err != nil {
-		return nil, err
-	}
-	if a, ok := container.Atom.(*Quote); ok {
-		up.append(&List{Atoms: []Atom{a.Kind.symbol(), s.Atom}})
-	}
-	return next, nil
-}
+const scopeBraced = true
+const scopeQuoted = false
 
 func (d *decoder) readLiteral() (next nextfunc, err error) {
-	if d.current == rComma {
-		for up := d.last; up != nil; up = up.up {
-			switch a := up.Atom.(type) {
-			case *List:
-				if len(a.Atoms) >= 1 && a.Atoms[0] == Symbol("quasiquote") {
-					goto ok
-				}
-
-			case *Quote:
-				if a.Kind == QQuasiquote {
-					goto ok
-				}
-			}
-		}
-		return nil, d.syntaxerr(ErrUnquoteContext)
+	sym := skim.Quote
+	switch d.current {
+	case rBacktick:
+		sym = skim.Quasiquote
+	case rComma:
+		sym = skim.Unquote
 	}
 
-ok:
-	lit := &Quote{Kind: QuoteKind(d.current)}
-	d.last = &scope{up: d.last, Atom: lit}
-
+	// ok:
+	d.push(scopeQuoted, nil)
+	d.last.append(sym)
 	return d.readSyntax, d.skip()
 }
 
@@ -486,8 +357,8 @@ func (d *decoder) readComment() (next nextfunc, err error) {
 func (d *decoder) reset(r io.Reader) {
 	const defaultBufferCap = 64
 
-	d.root = &scope{Atom: &List{}}
-	d.last = d.root
+	d.root = *newScope(nil, false, nil)
+	d.last = &d.root
 
 	if rx, ok := r.(runeReader); ok {
 		d.readrune = rx.ReadRune
@@ -509,13 +380,30 @@ func (d *decoder) reset(r io.Reader) {
 	d.nexterr = nil
 }
 
+func Read(r io.Reader) (*skim.Cons, error) {
+	var dec decoder
+	return dec.Read(r)
+}
+
+func (d *decoder) Read(r io.Reader) (*skim.Cons, error) {
+	d.reset(r)
+	if err := d.read(); err != nil {
+		return nil, err
+	}
+	root := d.root.root
+	d.root, d.last = scope{}, &d.root
+	d.buffer.Reset()
+
+	return root, nil
+}
+
 func (d *decoder) read() (err error) {
 	defer panictoerr(&err)
 	var next nextfunc = d.start
 	for next != nil && err == nil {
 		next, err = next()
 	}
-	if err == io.EOF && d.root == d.last {
+	if err == io.EOF && d.last == &d.root {
 		err = nil
 	}
 	return err
