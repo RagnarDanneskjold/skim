@@ -2,6 +2,7 @@ package skim
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -11,6 +12,14 @@ type Atom interface {
 	// SkimAtom is an empty method -- it exists only to mark a type as an Atom at compile time.
 	SkimAtom()
 	String() string
+}
+
+type Numeric interface {
+	Atom
+
+	IsFloat() bool
+	Int64() (int64, bool)
+	Float64() (float64, bool)
 }
 
 type goStringer interface {
@@ -45,13 +54,19 @@ func fmtstring(v interface{}) string {
 
 type Int int64
 
-func (Int) SkimAtom()        {}
-func (i Int) String() string { return strconv.FormatInt(int64(i), 10) }
+func (Int) SkimAtom()                  {}
+func (i Int) String() string           { return strconv.FormatInt(int64(i), 10) }
+func (Int) IsFloat() bool              { return false }
+func (i Int) Float64() (float64, bool) { return float64(i), true }
+func (i Int) Int64() (int64, bool)     { return int64(i), true }
 
 type Float float64
 
-func (Float) SkimAtom()        {}
-func (f Float) String() string { return strconv.FormatFloat(float64(f), 'f', -1, 64) }
+func (Float) SkimAtom()                  {}
+func (f Float) String() string           { return strconv.FormatFloat(float64(f), 'f', -1, 64) }
+func (Float) IsFloat() bool              { return true }
+func (f Float) Float64() (float64, bool) { return float64(f), true }
+func (f Float) Int64() (int64, bool)     { return int64(f), true }
 
 type Symbol string
 
@@ -180,15 +195,14 @@ func (b Bool) String() string {
 
 func Pair(a Atom) (lhs, rhs Atom, err error) {
 	la, ok := a.(*Cons)
-	if !ok {
-		return nil, nil, fmt.Errorf("atom %v is not a cons cell", a)
+	if !ok || la == nil {
+		return nil, nil, errors.New("skim: (car atom) is not a cons cell")
 	}
 	ra, ok := la.Cdr.(*Cons)
-	if !ok {
-		return nil, nil, fmt.Errorf("atom %v is not a cons cell", la.Cdr)
-	}
-	if ra.Cdr != nil {
-		return nil, nil, fmt.Errorf("atom %v is not a pair", a)
+	if !ok || ra == nil {
+		return nil, nil, errors.New("skim: (cdr atom) is not a cons cell")
+	} else if ra.Cdr != nil {
+		return nil, nil, errors.New("skim: (cdr atom) is not a pair")
 	}
 	return la.Car, ra.Car, nil
 }
