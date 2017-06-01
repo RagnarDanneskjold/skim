@@ -56,10 +56,6 @@ func LetStar(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
 	return letform(ctx, ctx, form)
 }
 
-func LetRec(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
-	return letform(ctx, ctx.Parent().Fork(), form)
-}
-
 func Newline(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	if v != nil {
 		return nil, fmt.Errorf("expected no arguments; got %v", v)
@@ -107,7 +103,6 @@ func BindCore(ctx *interp.Context) {
 	ctx.BindProc("begin", BeginBlock)
 	ctx.BindProc("let", Let)
 	ctx.BindProc("let*", LetStar)
-	// ctx.BindProc("letrec", LetRec)
 	ctx.BindProc("quote", QuoteFn)
 }
 
