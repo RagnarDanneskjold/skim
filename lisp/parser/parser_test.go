@@ -155,7 +155,6 @@ func TestParse(t *testing.T) {
 	}
 	sort.Strings(keys)
 
-	n := 3
 	for _, name := range keys {
 		c := cases[name]
 		t.Run(name, func(t *testing.T) {
