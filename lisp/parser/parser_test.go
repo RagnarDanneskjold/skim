@@ -158,7 +158,7 @@ func TestParse(t *testing.T) {
 	n := 3
 	for _, name := range keys {
 		c := cases[name]
-		if !t.Run(name, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			debug.SetLoggerf(t.Logf)
 			got, err := Read(strings.NewReader(c.in))
 			want := c.out
@@ -168,12 +168,6 @@ func TestParse(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("Read(%q) failed;\ngot  %v\nwant %v", c.in, got, want)
 			}
-		}) {
-			if n--; n <= 0 {
-				n--
-				t.Logf("too many failures: stopping early")
-				break
-			}
-		}
+		})
 	}
 }
