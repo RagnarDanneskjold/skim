@@ -44,17 +44,13 @@ func (s *scope) cons() *skim.Cons {
 }
 
 func (s *scope) append(tip skim.Atom) {
-	if skim.IsNil(tip) && !s.open {
-		tip = nil
-	}
 	next := new(skim.Cons)
 	s.tail.Car, s.tail.Cdr = tip, next
 	s.last, s.tail = s.tail, next
 }
 
-// decoder is a wrapper around an io.Reader for the purpose of doing by-rune parsing of INI file
-// input. It also holds enough state to track line, column, key prefixes (from sections), and
-// errors.
+// decoder is a wrapper around an io.Reader for the purpose of doing by-rune parsing of input. It
+// also holds enough state to track line, column, key prefixes (from sections), and errors.
 type decoder struct {
 	rd       io.Reader
 	readrune func() (rune, int, error)
@@ -186,29 +182,51 @@ func isSymbolic(r rune) bool {
 	return unicode.IsSpace(r) || sentinelRunes.Contains(r)
 }
 
+func (d *decoder) seal(force bool, next nextfunc, err error) (nextfunc, error) {
+	if err != nil {
+		return nil, err
+	}
+
+	for ; force || (d.last.up != nil && !d.last.open); force = false {
+		a := d.last.cons()
+		if a != nil {
+			d.last.up.append(a)
+		}
+		d.last = d.last.up
+	}
+
+	return next, err
+}
+
+func (d *decoder) sealImplicit(next nextfunc, err error) (nextfunc, error) {
+	return d.seal(false, next, err)
+}
+
+func (d *decoder) close(next nextfunc, err error) (nextfunc, error) {
+	if err != nil {
+		return nil, err
+	} else if d.last.up == nil {
+		return nil, d.syntaxerr(errors.New("cannot close current scope"))
+	}
+	return d.seal(true, next, err)
+}
+
 func (d *decoder) assign(a skim.Atom, close bool, next nextfunc, err error) (nextfunc, error) {
 	if err != nil {
 		return nil, err
 	} else if d.last.up == nil && close {
 		return nil, fmt.Errorf("cannot close current scope")
 	}
-
-	if a != nil {
-		d.last.append(a)
-	}
-
-	for ; d.last.up != nil && d.last.open == close; close = false {
-		d.last.up.append(d.last.cons())
-		d.last = d.last.up
-	}
-
-	return next, nil
+	d.last.append(a)
+	return d.sealImplicit(next, err)
 }
 
 func (d *decoder) readSymbol() (next nextfunc, err error) {
 	d.buffer.WriteRune(d.current)
 	err = d.readUntil(runeFunc(isSymbolic), true, nil)
-	if err != nil {
+	if err == io.EOF {
+		err = nil // handle it next time around
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -231,7 +249,7 @@ func (d *decoder) readSymbol() (next nextfunc, err error) {
 			return d.assign(skim.Int(integer), false, d.readSyntax, nil)
 		}
 	} else if zero { // literal zero
-		return d.assign(skim.Int(0), true, d.readSyntax, nil)
+		return d.assign(skim.Int(0), false, d.readSyntax, nil)
 	}
 
 next:
@@ -243,7 +261,6 @@ next:
 	// float (10)
 	fp, err := strconv.ParseFloat(txt, 64)
 	if err == nil {
-		d.last.append(skim.Float(fp))
 		return d.assign(skim.Float(fp), false, d.readSyntax, nil)
 	}
 
@@ -252,6 +269,8 @@ next:
 		switch txt {
 		case "#t", "#f":
 			a = skim.Bool(txt == "#t")
+		case "#nil":
+			a = nil
 		default:
 			return nil, d.syntaxerr(fmt.Errorf("invalid token", txt))
 		}
@@ -295,7 +314,7 @@ func (d *decoder) closeList() (next nextfunc, err error) {
 		err = nil
 	}
 
-	return d.assign(nil, true, d.readSyntax, err)
+	return d.close(d.readSyntax, err)
 }
 
 func (d *decoder) unimplemented() (nextfunc, error) {
@@ -380,7 +399,7 @@ func (d *decoder) Read(r io.Reader) (*skim.Cons, error) {
 	if err := d.read(); err != nil {
 		return nil, err
 	}
-	root := d.root.root
+	root := d.root.cons()
 	d.root, d.last = scope{}, &d.root
 	d.buffer.Reset()
 

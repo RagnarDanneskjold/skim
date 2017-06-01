@@ -19,12 +19,12 @@ type goStringer interface {
 
 func fmtgostring(v interface{}) string {
 	switch v := v.(type) {
-	case nil:
-		return "()"
 	case goStringer:
 		return v.GoString()
 	case fmt.Stringer:
 		return v.String()
+	case nil:
+		return "#nil"
 	default:
 		return fmt.Sprint(v)
 	}
@@ -32,10 +32,10 @@ func fmtgostring(v interface{}) string {
 
 func fmtstring(v interface{}) string {
 	switch v := v.(type) {
-	case nil:
-		return "()"
 	case fmt.Stringer:
 		return v.String()
+	case nil:
+		return "#nil"
 	default:
 		return fmt.Sprint(v)
 	}
@@ -84,7 +84,11 @@ func IsNil(a Atom) bool {
 func (*Cons) SkimAtom() {}
 func (c *Cons) string(gostring bool) string {
 	if c == nil {
-		return "'()"
+		return "#null"
+	}
+
+	if IsNil(c) {
+		return "()"
 	}
 
 	fmtfn := fmtstring
@@ -103,7 +107,7 @@ func (c *Cons) string(gostring bool) string {
 		}
 
 		if c, ok := c.Cdr.(*Cons); ok {
-			if c.Car == nil && c.Cdr == nil {
+			if IsNil(c) {
 				return quo + "()"
 			}
 
@@ -158,6 +162,9 @@ func printAtom(a Atom, buf bytes.Buffer, lead, prefix string) bytes.Buffer {
 }
 
 func (c *Cons) GoString() string {
+	if c == nil {
+		return "#null"
+	}
 	return "(" + fmtgostring(c.Car) + " . " + fmtgostring(c.Cdr) + ")"
 }
 
@@ -260,15 +267,17 @@ func Walk(a Atom, fn func(Atom) error) error {
 	}
 }
 
-func List(a Atom) (list []Atom, err error) {
-	n := 0
-	if err = Walk(a, func(Atom) error { n++; return nil }); err != nil {
-		return nil, err
+func List(args ...Atom) Atom {
+	if len(args) == 0 {
+		return &Cons{}
 	}
-	if n == 0 {
-		return nil, nil
+	cons := make([]Cons, len(args)+1)
+	for i, q := range args {
+		c := &cons[i]
+		c.Car = q
+		if i < len(args)-1 {
+			c.Cdr = &cons[i+1]
+		}
 	}
-	n, list = 0, make([]Atom, n)
-	Walk(a, func(c Atom) error { list[n] = c; n++; return nil })
-	return list, nil
+	return &cons[0]
 }
