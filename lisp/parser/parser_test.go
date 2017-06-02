@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"go.spiff.io/skim/lisp/internal/debug"
+	"go.spiff.io/skim/internal/debug"
 	"go.spiff.io/skim/lisp/skim"
 )
 
