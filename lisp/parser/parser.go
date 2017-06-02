@@ -231,39 +231,61 @@ func (d *decoder) readSymbol() (next nextfunc, err error) {
 	}
 
 	txt := d.buffer.String()
-	n := len(txt)
 
 	// Try numbers
-	zero := n > 0 && txt[0] == '0'
-	if zero && n > 1 {
-		var integer int64
-		if txt[1] == 'x' { // hex (16)
-			integer, err = strconv.ParseInt(txt[2:], 16, 64)
-		} else if txt[1] >= '0' && txt[1] <= 7 { // octal (8)
-			integer, err = strconv.ParseInt(txt[1:], 8, 64)
-		} else {
-			goto next
+	if n := len(txt); n > 0 {
+		txt := txt
+		neg := txt[0] == '-'
+		if neg || txt[0] == '+' {
+			txt = txt[1:]
 		}
 
+		if txt == "" {
+			goto symbol
+		}
+
+		n = len(txt)
+		zero := n > 0 && txt[0] == '0'
+		if zero && n > 1 {
+			var integer int64
+			if txt[1] == 'x' { // hex (16)
+				integer, err = strconv.ParseInt(txt[2:], 16, 64)
+			} else if txt[1] >= '0' && txt[1] <= '7' { // octal (8)
+				integer, err = strconv.ParseInt(txt[1:], 8, 64)
+			} else {
+				goto next
+			}
+
+			if err == nil {
+				if neg {
+					integer = -integer
+				}
+				return d.assign(skim.Int(integer), false, d.readSyntax, nil)
+			}
+		} else if zero { // literal zero
+			return d.assign(skim.Int(0), false, d.readSyntax, nil)
+		}
+
+	next:
+		integer, err := strconv.ParseInt(txt, 10, 64) // decimal (10)
 		if err == nil {
+			if neg {
+				integer = -integer
+			}
 			return d.assign(skim.Int(integer), false, d.readSyntax, nil)
 		}
-	} else if zero { // literal zero
-		return d.assign(skim.Int(0), false, d.readSyntax, nil)
+
+		// float (10)
+		fp, err := strconv.ParseFloat(txt, 64)
+		if err == nil {
+			if neg {
+				fp = -fp
+			}
+			return d.assign(skim.Float(fp), false, d.readSyntax, nil)
+		}
 	}
 
-next:
-	integer, err := strconv.ParseInt(txt, 10, 64) // decimal (10)
-	if err == nil {
-		return d.assign(skim.Int(integer), false, d.readSyntax, nil)
-	}
-
-	// float (10)
-	fp, err := strconv.ParseFloat(txt, 64)
-	if err == nil {
-		return d.assign(skim.Float(fp), false, d.readSyntax, nil)
-	}
-
+symbol:
 	var a skim.Atom
 	if strings.HasPrefix(txt, "#") {
 		switch txt {

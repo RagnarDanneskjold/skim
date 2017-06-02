@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"go.spiff.io/skim/lisp/internal/debug"
 	"go.spiff.io/skim/lisp/skim"
@@ -54,8 +55,8 @@ func TestParse(t *testing.T) {
 			out: skim.List(skim.String("foobar")),
 		},
 		"string/escapes": {
-			in:  `"\0\x0a\x0A"`,
-			out: skim.List(skim.String("\x00\n\n")),
+			in:  `"\0\x0a\x0A\a\b\f\n\r\t\v\u0000\U00000000"`,
+			out: skim.List(skim.String("\x00\n\n\a\b\f\n\r\t\v\u0000\U00000000")),
 		},
 		"negative/symbol": {
 			in:  "-",
@@ -65,13 +66,45 @@ func TestParse(t *testing.T) {
 			in:  "-0",
 			out: skim.List(skim.Int(0)),
 		},
+		"negative/integer-0xff": {
+			in:  "-0xff",
+			out: skim.List(skim.Int(-255)),
+		},
+		"negative/integer-0654": {
+			in:  "-0654",
+			out: skim.List(skim.Int(-428)),
+		},
 		"integer-0": {
 			in:  "((0))",
 			out: cons(cons(cons(skim.Int(0), nil), nil), nil),
 		},
+		"integer-0xff": {
+			in:  "0xff",
+			out: skim.List(skim.Int(255)),
+		},
+		"integer-0654": {
+			in:  "0654",
+			out: skim.List(skim.Int(428)),
+		},
+		"integer-+0xff": {
+			in:  "+0xff",
+			out: skim.List(skim.Int(255)),
+		},
+		"integer-+0654": {
+			in:  "+0654",
+			out: skim.List(skim.Int(428)),
+		},
 		"negative/float-0.0": {
 			in:  "-0.0",
 			out: skim.List(skim.Float(-0.0)),
+		},
+		"float-0.0": {
+			in:  "0.0",
+			out: skim.List(skim.Float(0.0)),
+		},
+		"float-+0.0": {
+			in:  "+0.0",
+			out: skim.List(skim.Float(+0.0)),
 		},
 		"heredoc/lines": {
 			in: `(<<<---EOF
@@ -90,6 +123,10 @@ func TestParse(t *testing.T) {
 
 ---EOF)`,
 			out: skim.List(cons(skim.String("\n"), nil)),
+		},
+		"quasiquote-to-unquote": {
+			in:  "`(,())",
+			out: skim.List(cons(skim.Quasiquote, cons(cons(cons(skim.Unquote, cons(cons(nil, nil), nil)), nil), nil))),
 		},
 		"quote/empty-list": {
 			in:  `'()`,
@@ -157,9 +194,20 @@ func TestParse(t *testing.T) {
 
 	for _, name := range keys {
 		c := cases[name]
-		t.Run(name, func(t *testing.T) {
+		t.Run(name+"/string-reader", func(t *testing.T) {
 			debug.SetLoggerf(t.Logf)
 			got, err := Read(strings.NewReader(c.in))
+			want := c.out
+			if err != nil {
+				t.Fatalf("Read(%q) err = %#+v; want nil", c.in, err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Read(%q) failed;\ngot  %v\nwant %v", c.in, got, want)
+			}
+		})
+		t.Run(name+"/one-byte-reader", func(t *testing.T) {
+			debug.SetLoggerf(t.Logf)
+			got, err := Read(iotest.OneByteReader(strings.NewReader(c.in)))
 			want := c.out
 			if err != nil {
 				t.Fatalf("Read(%q) err = %#+v; want nil", c.in, err)
