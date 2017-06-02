@@ -5,10 +5,11 @@ import (
 	"io"
 	"os"
 
+	"go.spiff.io/skim/lisp/interp"
 	"go.spiff.io/skim/lisp/skim"
 )
 
-func BeginBlock(ctx *skim.Context, form *skim.Cons) (result skim.Atom, err error) {
+func BeginBlock(ctx *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
 	err = skim.Walk(form, func(a skim.Atom) error { result, err = ctx.Eval(a); return err })
 	if err != nil {
 		result = nil
@@ -16,7 +17,7 @@ func BeginBlock(ctx *skim.Context, form *skim.Cons) (result skim.Atom, err error
 	return
 }
 
-func letform(eval, bind *skim.Context, form *skim.Cons) (result skim.Atom, err error) {
+func letform(eval, bind *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
 	err = skim.Walk(form.Car, func(a skim.Atom) error {
 		l, r, err := skim.Pair(a)
 		if err != nil {
@@ -46,20 +47,20 @@ func letform(eval, bind *skim.Context, form *skim.Cons) (result skim.Atom, err e
 	return nil, nil
 }
 
-func Let(ctx *skim.Context, form *skim.Cons) (skim.Atom, error) {
+func Let(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
 	return letform(ctx, ctx.Fork(), form)
 }
 
-func LetStar(ctx *skim.Context, form *skim.Cons) (skim.Atom, error) {
+func LetStar(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
 	ctx = ctx.Fork()
 	return letform(ctx, ctx, form)
 }
 
-func LetRec(ctx *skim.Context, form *skim.Cons) (skim.Atom, error) {
+func LetRec(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
 	return letform(ctx, ctx.Parent().Fork(), form)
 }
 
-func Newline(c *skim.Context, v *skim.Cons) (skim.Atom, error) {
+func Newline(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	if v != nil {
 		return nil, fmt.Errorf("expected no arguments; got %v", v)
 	}
@@ -67,7 +68,7 @@ func Newline(c *skim.Context, v *skim.Cons) (skim.Atom, error) {
 	return nil, err
 }
 
-func Display(c *skim.Context, v *skim.Cons) (_ skim.Atom, err error) {
+func Display(c *interp.Context, v *skim.Cons) (_ skim.Atom, err error) {
 	var args []interface{}
 	err = skim.Walk(v, func(a skim.Atom) error {
 		a, err := c.Eval(a)
@@ -90,19 +91,19 @@ func Display(c *skim.Context, v *skim.Cons) (_ skim.Atom, err error) {
 	return nil, err
 }
 
-func QuoteFn(c *skim.Context, v *skim.Cons) (skim.Atom, error) {
+func QuoteFn(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	return v.Car, nil
 }
 
-func QuasiquoteFn(c *skim.Context, v *skim.Cons) (skim.Atom, error) {
+func QuasiquoteFn(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	return c.Fork().BindProc("unquote", UnquoteFn).Eval(v.Car)
 }
 
-func UnquoteFn(c *skim.Context, v *skim.Cons) (skim.Atom, error) {
+func UnquoteFn(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	return c.Fork().Bind("unquote", nil).Eval(v.Car)
 }
 
-func BindCore(ctx *skim.Context) {
+func BindCore(ctx *interp.Context) {
 	ctx.BindProc("begin", BeginBlock)
 	ctx.BindProc("let", Let)
 	ctx.BindProc("let*", LetStar)
@@ -110,7 +111,7 @@ func BindCore(ctx *skim.Context) {
 	ctx.BindProc("quote", QuoteFn)
 }
 
-func BindDisplay(ctx *skim.Context) {
+func BindDisplay(ctx *interp.Context) {
 	ctx.BindProc("newline", Newline)
 	ctx.BindProc("display", Display)
 }
