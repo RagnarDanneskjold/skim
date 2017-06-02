@@ -1,13 +1,15 @@
-package skim
+package interp
 
 import (
 	"errors"
 	"fmt"
+
+	"go.spiff.io/skim/lisp/skim"
 )
 
 type Context struct {
 	up    *Context
-	table map[Symbol]Atom
+	table map[skim.Symbol]skim.Atom
 
 	// upval is the table of upvalues names to opaque values (empty interfaces). These are used
 	// as private data held by the current context, in the event that there is shared
@@ -30,17 +32,17 @@ func (c *Context) Upvalue(name string) interface{} {
 	return c.upval[name]
 }
 
-func (c *Context) Bind(name Symbol, value Atom) *Context {
+func (c *Context) Bind(name skim.Symbol, value skim.Atom) *Context {
 	c.table[name] = value
 	return c
 }
 
-func (c *Context) BindProc(name Symbol, proc Proc) *Context {
+func (c *Context) BindProc(name skim.Symbol, proc Proc) *Context {
 	c.table[name] = proc
 	return c
 }
 
-func (c *Context) Unbind(name Symbol) bool {
+func (c *Context) Unbind(name skim.Symbol) bool {
 	_, ok := c.table[name]
 	if ok {
 		delete(c.table, name)
@@ -48,7 +50,7 @@ func (c *Context) Unbind(name Symbol) bool {
 	return ok
 }
 
-func (c *Context) Resolve(name Symbol) (value Atom, ok bool) {
+func (c *Context) Resolve(name skim.Symbol) (value skim.Atom, ok bool) {
 	for ; c != nil; c = c.up {
 		if value, ok = c.table[name]; ok {
 			return
@@ -60,7 +62,7 @@ func (c *Context) Resolve(name Symbol) (value Atom, ok bool) {
 func (c *Context) Fork() *Context {
 	return &Context{
 		up:    c,
-		table: make(map[Symbol]Atom),
+		table: make(map[skim.Symbol]skim.Atom),
 		upval: make(map[string]interface{}),
 	}
 }
@@ -76,12 +78,12 @@ func NewContext() *Context {
 	return (*Context).Fork(nil)
 }
 
-func (c *Context) Eval(a Atom) (result Atom, err error) {
+func (c *Context) Eval(a skim.Atom) (result skim.Atom, err error) {
 	switch a := a.(type) {
-	case *Cons:
+	case *skim.Cons:
 		var proc Proc
 		switch car := a.Car.(type) {
-		case Symbol:
+		case skim.Symbol:
 			v, ok := c.Resolve(car)
 			if !ok {
 				return nil, fmt.Errorf("undefined symbol: %v", car)
@@ -97,11 +99,11 @@ func (c *Context) Eval(a Atom) (result Atom, err error) {
 			return nil, fmt.Errorf("cannot call atom of type: %T", a.Car)
 		}
 
-		var argv *Cons
+		var argv *skim.Cons
 		var ok bool
 		if a.Cdr == nil {
 			// niladic procedure call (proc has to determine if this is valid)
-		} else if argv, ok = a.Cdr.(*Cons); !ok {
+		} else if argv, ok = a.Cdr.(*skim.Cons); !ok {
 			return nil, errors.New("ill-formed procedure call")
 		}
 
@@ -121,15 +123,15 @@ func (c *Context) Eval(a Atom) (result Atom, err error) {
 
 	case Proc:
 		return a, nil
-	case Bool:
+	case skim.Bool:
 		return a, nil
-	case Int:
+	case skim.Int:
 		return a, nil
-	case Float:
+	case skim.Float:
 		return a, nil
-	case String:
+	case skim.String:
 		return a, nil
-	case Symbol:
+	case skim.Symbol:
 		v, ok := c.Resolve(a)
 		if !ok {
 			return nil, fmt.Errorf("undefined symbol: %v", a)

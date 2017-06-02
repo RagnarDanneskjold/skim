@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"go.spiff.io/skim/lisp/builtins"
+	"go.spiff.io/skim/lisp/interp"
 	"go.spiff.io/skim/lisp/parser"
 	"go.spiff.io/skim/lisp/skim"
 )
@@ -17,7 +18,7 @@ func main() {
 		log.Fatal("decode: ", err)
 	}
 
-	ctx := skim.NewContext()
+	ctx := interp.NewContext()
 	builtins.BindCore(ctx)
 	builtins.BindDisplay(ctx)
 	skim.Walk(roots, func(a skim.Atom) error {

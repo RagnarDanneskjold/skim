@@ -184,16 +184,6 @@ func (b Bool) String() string {
 	return "#f"
 }
 
-type Proc func(*Context, *Cons) (Atom, error)
-
-func (Proc) SkimAtom() {}
-func (p Proc) String() string {
-	if p == nil {
-		return "proc#nil"
-	}
-	return fmt.Sprintf("proc#%p", p)
-}
-
 func Pair(a Atom) (lhs, rhs Atom, err error) {
 	la, ok := a.(*Cons)
 	if !ok {
