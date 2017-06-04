@@ -3,7 +3,6 @@ package skim
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 	"strconv"
 )
 
@@ -255,19 +254,6 @@ func List(args ...Atom) Atom {
 	return &cons[0]
 }
 
-type CadrError struct {
-	op  string
-	typ reflect.Type
-}
-
-func (e *CadrError) Error() string {
-	typ := "nil"
-	if e.typ != nil {
-		typ = e.typ.String()
-	}
-	return e.op + ": " + typ + " is not a cons cell"
-}
-
 func cadr(a Atom, seq string) (Atom, error) {
 	var c *Cons
 	var op byte
@@ -275,11 +261,7 @@ func cadr(a Atom, seq string) (Atom, error) {
 		op = seq[i]
 		c, _ = a.(*Cons)
 		if c == nil {
-			opname := "car"
-			if op == 'd' {
-				opname = "cdr"
-			}
-			return nil, &CadrError{op: opname, typ: reflect.TypeOf(a)}
+			return nil, fmt.Errorf("c%cr: %T is not a Cons", op, a)
 		} else if op == 'a' {
 			a = c.Car
 		} else {
@@ -292,7 +274,7 @@ func cadr(a Atom, seq string) (Atom, error) {
 func Car(a Atom) (Atom, error) {
 	c, _ := a.(*Cons)
 	if c == nil {
-		return nil, &CadrError{op: "car", typ: reflect.TypeOf(a)}
+		return nil, fmt.Errorf("car: %T is not a Cons", a)
 	}
 	return c.Car, nil
 }
@@ -300,7 +282,7 @@ func Car(a Atom) (Atom, error) {
 func Cdr(a Atom) (Atom, error) {
 	c, _ := a.(*Cons)
 	if c == nil {
-		return nil, &CadrError{op: "cdr", typ: reflect.TypeOf(a)}
+		return nil, fmt.Errorf("cdr: %T is not a Cons", a)
 	}
 	return c.Cdr, nil
 }

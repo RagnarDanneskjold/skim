@@ -1,6 +1,7 @@
 package skim
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -51,6 +52,8 @@ func TestCadr(t *testing.T) {
 		err  error
 	}
 
+	carErr := errors.New("car: skim.Int is not a Cons")
+	cdrErr := errors.New("cdr: skim.Int is not a Cons")
 	cases := map[string]testCase{
 		// If the following work, the rest should follow
 		"Car":    {fn: Car, in: nestl1, want: List(Int(1))},
@@ -67,10 +70,10 @@ func TestCadr(t *testing.T) {
 		"Cdddr":  {fn: Cdddr, in: seq, want: List(Int(4), Int(5))},
 		"Cddddr": {fn: Cddddr, in: seq, want: List(Int(5))},
 
-		"CarError":  {fn: Car, in: Int(1), err: &CadrError{op: "car", typ: reflect.TypeOf(Int(0))}},
-		"CdrError":  {fn: Cdr, in: Int(1), err: &CadrError{op: "cdr", typ: reflect.TypeOf(Int(0))}},
-		"CadrError": {fn: Cadr, in: &Cons{Int(1), Int(2)}, err: &CadrError{op: "car", typ: reflect.TypeOf(Int(0))}},
-		"CddrError": {fn: Cddr, in: &Cons{Int(1), Int(2)}, err: &CadrError{op: "cdr", typ: reflect.TypeOf(Int(0))}},
+		"CarError":  {fn: Car, in: Int(1), err: carErr},
+		"CdrError":  {fn: Cdr, in: Int(1), err: cdrErr},
+		"CadrError": {fn: Cadr, in: &Cons{Int(1), Int(2)}, err: carErr},
+		"CddrError": {fn: Cddr, in: &Cons{Int(1), Int(2)}, err: cdrErr},
 	}
 
 	for name, c := range cases {
