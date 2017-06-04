@@ -143,24 +143,6 @@ list:
 
 func (c *Cons) String() string { return c.string(false) }
 
-func printAtom(a Atom, buf bytes.Buffer, lead, prefix string) bytes.Buffer {
-	print := func(args ...interface{}) {
-		buf.WriteString(prefix + lead + fmt.Sprint(args...) + "\n")
-		lead = ""
-	}
-
-	switch a := a.(type) {
-	case *Cons:
-		print("(")
-		buf = printAtom(a.Car, buf, "", prefix+"\t")
-		buf = printAtom(a.Cdr, buf, ". ", prefix+"\t")
-		print(")")
-	default:
-		print(a)
-	}
-	return buf
-}
-
 func (c *Cons) GoString() string {
 	if c == nil {
 		return "#null"
