@@ -89,3 +89,55 @@ func TestCadr(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkCadrs(b *testing.B) {
+	seq := List(Int(0), Int(0), Int(0), Int(0))
+	seq = List(seq, seq, seq, seq, seq)
+	seq = List(seq, seq, seq, seq, seq)
+	seq = List(seq, seq, seq, seq, seq)
+
+	cases := map[string]func(Atom) (Atom, error){
+		"Car":    Car,
+		"Cdr":    Cdr,
+		"Caar":   Caar,
+		"Cadr":   Cadr,
+		"Cdar":   Cdar,
+		"Cddr":   Cddr,
+		"Caaar":  Caaar,
+		"Caadr":  Caadr,
+		"Cadar":  Cadar,
+		"Caddr":  Caddr,
+		"Cdaar":  Cdaar,
+		"Cdadr":  Cdadr,
+		"Cddar":  Cddar,
+		"Cdddr":  Cdddr,
+		"Caaaar": Caaaar,
+		"Caaadr": Caaadr,
+		"Caadar": Caadar,
+		"Caaddr": Caaddr,
+		"Cadaar": Cadaar,
+		"Cadadr": Cadadr,
+		"Caddar": Caddar,
+		"Cadddr": Cadddr,
+		"Cdaaar": Cdaaar,
+		"Cdaadr": Cdaadr,
+		"Cdadar": Cdadar,
+		"Cdaddr": Cdaddr,
+		"Cddaar": Cddaar,
+		"Cddadr": Cddadr,
+		"Cdddar": Cdddar,
+		"Cddddr": Cddddr,
+	}
+
+	b.ResetTimer()
+
+	for name, fn := range cases {
+		b.Run(name, func(b *testing.B) {
+			for i := b.N; i > 0; i-- {
+				if a, err := fn(seq); a == nil || err != nil {
+					b.FailNow()
+				}
+			}
+		})
+	}
+}
