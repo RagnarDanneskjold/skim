@@ -3,6 +3,7 @@ package skim
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strconv"
 )
 
@@ -169,11 +170,11 @@ func (b Bool) String() string {
 func Pair(a Atom) (lhs, rhs Atom, err error) {
 	la, ok := a.(*Cons)
 	if !ok {
-		return nil, nil, fmt.Errorf("atom %v is not a cons", a)
+		return nil, nil, fmt.Errorf("atom %v is not a cons cell", a)
 	}
 	ra, ok := la.Cdr.(*Cons)
 	if !ok {
-		return nil, nil, fmt.Errorf("atom %v is not a cons", la.Cdr)
+		return nil, nil, fmt.Errorf("atom %v is not a cons cell", la.Cdr)
 	}
 	if ra.Cdr != nil {
 		return nil, nil, fmt.Errorf("atom %v is not a pair", a)
@@ -253,3 +254,82 @@ func List(args ...Atom) Atom {
 	}
 	return &cons[0]
 }
+
+type CadrError struct {
+	op  string
+	typ reflect.Type
+}
+
+func (e *CadrError) Error() string {
+	typ := "nil"
+	if e.typ != nil {
+		typ = e.typ.String()
+	}
+	return e.op + ": " + typ + " is not a cons cell"
+}
+
+func cadr(a Atom, seq string) (Atom, error) {
+	var c *Cons
+	var op byte
+	for i := len(seq) - 1; i >= 0; i-- {
+		op = seq[i]
+		c, _ = a.(*Cons)
+		if c == nil {
+			opname := "car"
+			if op == 'd' {
+				opname = "cdr"
+			}
+			return nil, &CadrError{op: opname, typ: reflect.TypeOf(a)}
+		} else if op == 'a' {
+			a = c.Car
+		} else {
+			a = c.Cdr
+		}
+	}
+	return a, nil
+}
+
+func Car(a Atom) (Atom, error) {
+	c, _ := a.(*Cons)
+	if c == nil {
+		return nil, &CadrError{op: "car", typ: reflect.TypeOf(a)}
+	}
+	return c.Car, nil
+}
+
+func Cdr(a Atom) (Atom, error) {
+	c, _ := a.(*Cons)
+	if c == nil {
+		return nil, &CadrError{op: "cdr", typ: reflect.TypeOf(a)}
+	}
+	return c.Cdr, nil
+}
+
+func Caar(a Atom) (Atom, error)   { return cadr(a, "aa") }
+func Cadr(a Atom) (Atom, error)   { return cadr(a, "ad") }
+func Cdar(a Atom) (Atom, error)   { return cadr(a, "da") }
+func Cddr(a Atom) (Atom, error)   { return cadr(a, "dd") }
+func Caaar(a Atom) (Atom, error)  { return cadr(a, "aaa") }
+func Caadr(a Atom) (Atom, error)  { return cadr(a, "aad") }
+func Cadar(a Atom) (Atom, error)  { return cadr(a, "ada") }
+func Caddr(a Atom) (Atom, error)  { return cadr(a, "add") }
+func Cdaar(a Atom) (Atom, error)  { return cadr(a, "daa") }
+func Cdadr(a Atom) (Atom, error)  { return cadr(a, "dad") }
+func Cddar(a Atom) (Atom, error)  { return cadr(a, "dda") }
+func Cdddr(a Atom) (Atom, error)  { return cadr(a, "ddd") }
+func Caaaar(a Atom) (Atom, error) { return cadr(a, "aaaa") }
+func Caaadr(a Atom) (Atom, error) { return cadr(a, "aaad") }
+func Caadar(a Atom) (Atom, error) { return cadr(a, "aada") }
+func Caaddr(a Atom) (Atom, error) { return cadr(a, "aadd") }
+func Cadaar(a Atom) (Atom, error) { return cadr(a, "adaa") }
+func Cadadr(a Atom) (Atom, error) { return cadr(a, "adad") }
+func Caddar(a Atom) (Atom, error) { return cadr(a, "adda") }
+func Cadddr(a Atom) (Atom, error) { return cadr(a, "addd") }
+func Cdaaar(a Atom) (Atom, error) { return cadr(a, "daaa") }
+func Cdaadr(a Atom) (Atom, error) { return cadr(a, "daad") }
+func Cdadar(a Atom) (Atom, error) { return cadr(a, "dada") }
+func Cdaddr(a Atom) (Atom, error) { return cadr(a, "dadd") }
+func Cddaar(a Atom) (Atom, error) { return cadr(a, "ddaa") }
+func Cddadr(a Atom) (Atom, error) { return cadr(a, "ddad") }
+func Cdddar(a Atom) (Atom, error) { return cadr(a, "ddda") }
+func Cddddr(a Atom) (Atom, error) { return cadr(a, "dddd") }
