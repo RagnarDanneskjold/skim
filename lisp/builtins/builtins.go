@@ -44,6 +44,9 @@ func letform(eval, bind *interp.Context, form *skim.Cons) (result skim.Atom, err
 		return err
 	})
 
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
