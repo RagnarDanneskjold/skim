@@ -90,6 +90,43 @@ func Display(c *interp.Context, v *skim.Cons) (_ skim.Atom, err error) {
 	return nil, err
 }
 
+func Cons(ctx *interp.Context, form *skim.Cons) (cons skim.Atom, err error) {
+	car, cdr, err := skim.Pair(form)
+	if err != nil {
+		return nil, err
+	}
+
+	car, err = ctx.Eval(car)
+	if err == nil {
+		cdr, err = ctx.Eval(cdr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &skim.Cons{Car: car, Cdr: cdr}, nil
+}
+
+func List(ctx *interp.Context, form *skim.Cons) (list skim.Atom, err error) {
+	if form == nil {
+		return &skim.Cons{}, nil
+	}
+	var pred *skim.Atom = &list
+	for a := skim.Atom(form); a != nil && err == nil; a, err = skim.Cdr(a) {
+		var car skim.Atom
+		car, err = skim.Car(a)
+		if err == nil {
+			car, err = ctx.Eval(car)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		next := &skim.Cons{Car: car}
+		*pred, pred = next, &next.Cdr
+	}
+	return list, nil
+}
+
 func QuoteFn(c *interp.Context, v *skim.Cons) (skim.Atom, error) {
 	return v.Car, nil
 }
@@ -106,6 +143,8 @@ func BindCore(ctx *interp.Context) {
 	ctx.BindProc("begin", BeginBlock)
 	ctx.BindProc("let", Let)
 	ctx.BindProc("let*", LetStar)
+	ctx.BindProc("cons", Cons)
+	ctx.BindProc("list", List)
 	ctx.BindProc("quote", QuoteFn)
 }
 
