@@ -78,7 +78,7 @@ func IsTrue(a Atom) bool {
 	case *Cons:
 		return a != nil && (a.Car != nil || a.Cdr != nil)
 	}
-	return false
+	return true
 }
 
 func IsNil(a Atom) bool {
