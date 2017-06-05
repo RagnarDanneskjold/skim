@@ -69,6 +69,18 @@ func (s Symbol) GoString() string { return string(s) }
 
 type Cons struct{ Car, Cdr Atom }
 
+func IsTrue(a Atom) bool {
+	switch a := a.(type) {
+	case Bool:
+		return bool(a)
+	case nil:
+		return false
+	case *Cons:
+		return a != nil && (a.Car != nil || a.Cdr != nil)
+	}
+	return false
+}
+
 func IsNil(a Atom) bool {
 	if a == nil {
 		return true

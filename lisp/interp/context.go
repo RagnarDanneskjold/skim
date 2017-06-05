@@ -137,6 +137,8 @@ func (c *Context) Eval(a skim.Atom) (result skim.Atom, err error) {
 			return nil, fmt.Errorf("undefined symbol: %v", a)
 		}
 		return v, nil
+	case nil:
+		return nil, nil
 	}
 
 	return nil, fmt.Errorf("unsupported execution atom: %T", a)

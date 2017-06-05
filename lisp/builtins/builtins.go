@@ -50,6 +50,88 @@ func letform(eval, bind *interp.Context, form *skim.Cons) (result skim.Atom, err
 	return result, nil
 }
 
+func LogAnd(ctx *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
+	if form == nil {
+		return nil, nil
+	}
+	for a := skim.Atom(form); a != nil && err == nil; a, err = skim.Cdr(a) {
+		result, err = skim.Car(a)
+		if err == nil {
+			result, err = ctx.Eval(result)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !skim.IsTrue(result) {
+			return nil, nil
+		}
+	}
+	if err != nil {
+		result = nil
+	}
+	return
+}
+
+func LogOr(ctx *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
+	if form == nil {
+		return nil, nil
+	}
+	for a := skim.Atom(form); a != nil && err == nil; a, err = skim.Cdr(a) {
+		result, err = skim.Car(a)
+		if err == nil {
+			result, err = ctx.Eval(result)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if skim.IsTrue(result) {
+			return result, nil
+		}
+	}
+	return nil, err
+}
+
+func Cond(ctx *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
+	if form == nil {
+		return
+	}
+
+	var a skim.Atom = form
+	for ; a != nil; a, err = skim.Cdr(a) {
+		var clause, test, conseq skim.Atom
+		clause, err = skim.Car(a)
+		if err != nil {
+			return nil, err
+		}
+
+		test, err = skim.Car(clause)
+		if err != nil {
+			return nil, err
+		}
+
+		conseq, err = skim.Cdr(clause)
+		if err != nil {
+			return nil, err
+		}
+
+		test, err = ctx.Eval(test)
+		if err != nil {
+			return nil, err
+		} else if !skim.IsTrue(test) {
+			continue
+		}
+
+		err = skim.Walk(conseq, func(a skim.Atom) error { result, err = ctx.Eval(a); return err })
+		if err != nil {
+			result = nil
+		}
+		return
+	}
+	return nil, nil
+}
+
 func Let(ctx *interp.Context, form *skim.Cons) (skim.Atom, error) {
 	return letform(ctx, ctx.Fork(), form)
 }
@@ -146,6 +228,9 @@ func BindCore(ctx *interp.Context) {
 	ctx.BindProc("cons", Cons)
 	ctx.BindProc("list", List)
 	ctx.BindProc("quote", QuoteFn)
+	ctx.BindProc("cond", Cond)
+	ctx.BindProc("and", LogAnd)
+	ctx.BindProc("or", LogOr)
 }
 
 func BindDisplay(ctx *interp.Context) {

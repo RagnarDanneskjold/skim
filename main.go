@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"go.spiff.io/skim/internal/debug"
 	"go.spiff.io/skim/lisp/builtins"
 	"go.spiff.io/skim/lisp/interp"
 	"go.spiff.io/skim/lisp/parser"
@@ -13,6 +14,7 @@ import (
 
 func main() {
 	log.SetFlags(0)
+	debug.SetLogger(log.Print)
 	roots, err := parser.Read(os.Stdin)
 	if err != nil {
 		log.Fatal("decode: ", err)
