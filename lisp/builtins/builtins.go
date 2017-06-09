@@ -1,6 +1,7 @@
 package builtins
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +9,66 @@ import (
 	"go.spiff.io/skim/lisp/interp"
 	"go.spiff.io/skim/lisp/skim"
 )
+
+// MapFunc is a function used to map an atom to another atom. It may return an error, in which case
+// the caller should assume the result atom is unusable unless documented otherwise for special uses
+// of a specific MapFunc.
+type MapFunc func(skim.Atom) (skim.Atom, error)
+
+func (fn MapFunc) Map(atom skim.Atom) (skim.Atom, error) {
+	if fn == nil {
+		return nil, errors.New("map: MapFunc is nil")
+	}
+	return fn(atom)
+}
+
+// Map iterates over a list and maps its values using mapfn. It returns a new list with the mapped
+// values. The input list must be, strictly, a list -- that is, all Cdrs of the input list must
+// either be nil or another cons cell meeting the same criteria.
+func Map(list *skim.Cons, mapfn MapFunc) (*skim.Cons, error) {
+	if list == nil {
+		return nil, nil
+	}
+
+	var root skim.Atom
+	var cdr *skim.Atom = &root
+	err := skim.Walk(list, func(a skim.Atom) (err error) {
+		if a, err = mapfn.Map(a); err != nil {
+			return err
+		}
+
+		next := &skim.Cons{Car: a}
+		*cdr, cdr = next, &next.Cdr
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return root.(*skim.Cons), nil
+}
+
+// Expand expands the values by evaluating each value in the scope of the interpreter context, ctx.
+// It returns a new list with the expanded values.
+//
+// This is a convenience function for Map(list, ctx.Eval).
+func Expand(ctx *interp.Context, list *skim.Cons) (*skim.Cons, error) {
+	return Map(list, ctx.Eval)
+}
+
+// Expanded returns a new Proc that will invoke fn with expanded values of its form when called.
+// This is useful as a convenience when dealing with regular functions that do not receive anything
+// other than normal arguments as a list. For special procs, such as let, let*, begin, cond, and, or
+// (particulary for short-circuiting), and so on, more careful evaluation of its arguments is
+// necessary.
+func Expanded(fn interp.Proc) interp.Proc {
+	return func(ctx *interp.Context, argv *skim.Cons) (result skim.Atom, err error) {
+		if argv, err = Expand(ctx, argv); err != nil {
+			return nil, err
+		}
+		return fn(ctx, argv)
+	}
+}
 
 func BeginBlock(ctx *interp.Context, form *skim.Cons) (result skim.Atom, err error) {
 	err = skim.Walk(form, func(a skim.Atom) error { result, err = ctx.Eval(a); return err })
