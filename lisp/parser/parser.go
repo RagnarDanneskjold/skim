@@ -18,35 +18,39 @@ import (
 type nextfunc func() (nextfunc, error)
 
 type scope struct {
-	up   *scope
-	open bool // if true, requires a closing parenthesis
-	root *skim.Cons
-	last *skim.Cons
-	tail *skim.Cons
+	newPair func() *skim.Cons
+	up      *scope
+	open    bool // if true, requires a closing parenthesis
+	head    skim.Atom
+	cdr     *skim.Atom
 }
 
-func newScope(up *scope, open bool) *scope {
-	root := new(skim.Cons)
-	s := &scope{
-		up:   up,
-		open: open,
-		root: root,
-		tail: root,
-	}
+func newScope(up *scope, open bool, newPair func() *skim.Cons) *scope {
+	s := new(scope)
+	s.reset(up, open, newPair)
 	return s
 }
 
-func (s *scope) cons() *skim.Cons {
-	if s.last != nil {
-		s.last.Cdr = nil
+func (s *scope) reset(up *scope, open bool, newPair func() *skim.Cons) {
+	*s = scope{
+		newPair: newPair,
+		up:      up,
+		open:    open,
+		head:    nil,
+		cdr:     &s.head,
 	}
-	return s.root
+}
+
+func (s *scope) cons() *skim.Cons {
+	if s.head == nil {
+		return s.newPair()
+	}
+	return s.head.(*skim.Cons)
 }
 
 func (s *scope) append(tip skim.Atom) {
-	next := new(skim.Cons)
-	s.tail.Car, s.tail.Cdr = tip, next
-	s.last, s.tail = s.tail, next
+	next := s.newPair()
+	next.Car, *s.cdr, s.cdr = tip, next, &next.Cdr
 }
 
 // decoder is a wrapper around an io.Reader for the purpose of doing by-rune parsing of input. It
@@ -70,6 +74,10 @@ type decoder struct {
 
 	root scope
 	last *scope
+
+	pairbufSize int
+	pairbufHead int
+	pairbuf     []skim.Cons
 }
 
 const (
@@ -83,32 +91,45 @@ const (
 	rComma      = ','
 )
 
-func (d *decoder) readSyntax() (next nextfunc, err error) {
-	if err = must(d.skipSpace(true), io.EOF); err == io.EOF {
-		return nil, err
+func (d *decoder) allocPair() *skim.Cons {
+	sz := d.pairbufSize
+	if sz == 1 {
+		return new(skim.Cons)
 	}
 
-	if d.err != nil {
+	head, buf := d.pairbufHead, d.pairbuf
+	if head == len(buf) {
+		head, buf = 0, make([]skim.Cons, sz)
+		d.pairbuf = buf
+	}
+	d.pairbufHead = head + 1
+	return &buf[head]
+}
+
+func (d *decoder) readSyntax() (next nextfunc, err error) {
+	if err = d.skipSpace(true); err != nil {
 		return nil, err
+	} else if d.err != nil {
+		return nil, d.err
 	}
 
 	d.buffer.Reset()
 	switch d.current {
 	case rOpenParen:
-		return d.readList, nil
+		return d.readList()
 	case rCloseParen:
-		return d.closeList, nil
+		return d.closeList()
 	case rComment:
-		return d.readComment, nil
-	case rQuote, rBacktick, rComma: // quote
-		return d.readLiteral, nil
+		return d.readComment()
+	case rQuote, rBacktick, rComma:
+		return d.readLiteral()
 	case rString:
-		return d.readString, nil
+		return d.readString()
 	default:
-		return d.readSymbol, nil
+		return d.readSymbol()
 	}
 
-	return nil, errors.New("unimplemented")
+	return nil, d.syntaxerr(BadCharError(d.current))
 }
 
 func (d *decoder) readHexCode(size int) (result rune, err error) {
@@ -139,7 +160,7 @@ func (d *decoder) readHexCode(size int) (result rune, err error) {
 }
 
 func (d *decoder) readString() (next nextfunc, err error) {
-	err = d.readUntil(runestr(`"\`), true, nil)
+	err = d.readUntilBuffer(runestr(`"\`))
 	if err == io.EOF {
 		return nil, d.syntaxerr(UnclosedError('"'), "encountered EOF inside string")
 	} else if err != nil {
@@ -152,7 +173,9 @@ func (d *decoder) readString() (next nextfunc, err error) {
 
 	case '\\':
 		r, _, err := d.nextRune()
-		must(err)
+		if err != nil {
+			return nil, err
+		}
 		switch r {
 		case 'x': // 1 octet
 			r, err = d.readHexCode(2)
@@ -164,16 +187,17 @@ func (d *decoder) readString() (next nextfunc, err error) {
 			r, err = d.readHexCode(8)
 			d.buffer.WriteRune(r)
 		default:
-			r = escaped(r)
 			d.buffer.WriteRune(escaped(r))
 		}
 		return d.readString, err
 	}
 
-	defer stopOnEOF(&next, &err)
-
 	d.last.append(skim.String(d.buffer.String()))
-	return d.readSyntax, d.skip()
+
+	if err = d.skip(); err == io.EOF {
+		return nil, nil
+	}
+	return d.readSyntax, err
 }
 
 var sentinelRunes = runestr("()'\",`;")
@@ -182,11 +206,7 @@ func isSymbolic(r rune) bool {
 	return unicode.IsSpace(r) || sentinelRunes.Contains(r)
 }
 
-func (d *decoder) seal(force bool, next nextfunc, err error) (nextfunc, error) {
-	if err != nil {
-		return nil, err
-	}
-
+func (d *decoder) seal(force bool) (nextfunc, error) {
 	for ; force || (d.last.up != nil && !d.last.open); force = false {
 		a := d.last.cons()
 		if a != nil {
@@ -195,114 +215,125 @@ func (d *decoder) seal(force bool, next nextfunc, err error) (nextfunc, error) {
 		d.last = d.last.up
 	}
 
-	return next, err
+	return d.readSyntax, nil
 }
 
-func (d *decoder) sealImplicit(next nextfunc, err error) (nextfunc, error) {
-	return d.seal(false, next, err)
-}
-
-func (d *decoder) close(next nextfunc, err error) (nextfunc, error) {
-	if err != nil {
-		return nil, err
-	} else if d.last.up == nil {
+func (d *decoder) close() (nextfunc, error) {
+	if d.last.up == nil {
 		return nil, d.syntaxerr(errors.New("cannot close current scope"))
 	}
-	return d.seal(true, next, err)
+	return d.seal(true)
 }
 
-func (d *decoder) assign(a skim.Atom, close bool, next nextfunc, err error) (nextfunc, error) {
-	if err != nil {
-		return nil, err
-	} else if d.last.up == nil && close {
-		return nil, fmt.Errorf("cannot close current scope")
-	}
+func (d *decoder) assign(a skim.Atom) (nextfunc, error) {
 	d.last.append(a)
-	return d.sealImplicit(next, err)
+	return d.seal(false)
 }
 
 func (d *decoder) readSymbol() (next nextfunc, err error) {
 	d.buffer.WriteRune(d.current)
-	err = d.readUntil(runeFunc(isSymbolic), true, nil)
+	err = d.readUntilBuffer(runeFunc(isSymbolic))
 	if err == io.EOF {
 		err = nil // handle it next time around
 	} else if err != nil {
 		return nil, err
 	}
 
-	txt := d.buffer.String()
+	txt := d.buffer.Bytes()
 
 	// Try numbers
-	if n := len(txt); n > 0 {
-		txt := txt
-		neg := txt[0] == '-'
+	{
+		var (
+			n     = len(txt)
+			txt   = txt
+			first = txt[0]
+			neg   = first == '-'
+		)
+
 		if neg || txt[0] == '+' {
 			txt = txt[1:]
+			if n--; n < 1 {
+				goto symbol
+			}
+			first = txt[0]
 		}
 
-		if txt == "" {
-			goto symbol
-		}
-
-		n = len(txt)
-		zero := n > 0 && txt[0] == '0'
-		if zero && n > 1 {
+		zero := n > 0 && first == '0'
+		if first == '.' {
+			goto float
+		} else if zero && n > 1 {
 			var integer int64
-			if txt[1] == 'x' { // hex (16)
-				integer, err = strconv.ParseInt(txt[2:], 16, 64)
-			} else if txt[1] >= '0' && txt[1] <= '7' { // octal (8)
-				integer, err = strconv.ParseInt(txt[1:], 8, 64)
-			} else {
-				goto next
-			}
-
-			if err == nil {
-				if neg {
-					integer = -integer
+			switch second := txt[1]; second {
+			case 'x': // hex (16)
+				if integer, err = strconv.ParseInt(string(txt[2:]), 16, 64); err == nil {
+					break
 				}
-				return d.assign(skim.Int(integer), false, d.readSyntax, nil)
+				goto symbol
+			case '0', '1', '2', '3', '4', '5', '6', '7': // octal (8)
+				if integer, err = strconv.ParseInt(string(txt[1:]), 8, 64); err == nil {
+					break
+				}
+				goto integer
+			case '8', '9':
+				goto integer
+			case '.':
+				goto float
+			default:
+				goto symbol
 			}
-		} else if zero { // literal zero
-			return d.assign(skim.Int(0), false, d.readSyntax, nil)
-		}
 
-	next:
-		integer, err := strconv.ParseInt(txt, 10, 64) // decimal (10)
-		if err == nil {
 			if neg {
 				integer = -integer
 			}
-			return d.assign(skim.Int(integer), false, d.readSyntax, nil)
+			return d.assign(skim.Int(integer))
+		} else if zero {
+			return d.assign(skim.Int(0))
 		}
 
-		// float (10)
-		fp, err := strconv.ParseFloat(txt, 64)
-		if err == nil {
+	integer: // base 10
+		if first < '0' || first > '9' {
+			goto symbol
+		}
+
+		if integer, err := strconv.ParseInt(string(txt), 10, 64); err == nil {
+			if neg {
+				integer = -integer
+			}
+			return d.assign(skim.Int(integer))
+		}
+
+	float:
+		if fp, err := strconv.ParseFloat(string(txt), 64); err == nil {
 			if neg {
 				fp = -fp
 			}
-			return d.assign(skim.Float(fp), false, d.readSyntax, nil)
+			return d.assign(skim.Float(fp))
 		}
 	}
 
 symbol:
 	var a skim.Atom
-	if strings.HasPrefix(txt, "#") {
-		switch txt {
-		case "#t", "#f":
-			a = skim.Bool(txt == "#t")
-		case "#nil":
-			a = nil
+	if n := len(txt); txt[0] == '#' && n > 1 {
+		switch second := txt[1]; {
+		case n == 2 && (second == 't' || second == 'f'):
+			a = skim.Bool(second == 't')
+		case n == 4 && second == 'n':
+			if txt[2] == 'i' && txt[3] == 'l' {
+				a = nil
+				break
+			}
+			fallthrough
 		default:
-			return nil, d.syntaxerr(fmt.Errorf("invalid token", txt))
+			a = skim.Symbol(txt)
 		}
-	} else if strings.HasPrefix(txt, "<<<") && d.current == '\n' && len(txt) > 3 {
+	} else if n > 3 && d.current == '\n' && txt[2] == '<' && txt[1] == '<' && txt[0] == '<' {
 		// HEREDOC
+		end := make([]byte, n-3)
+		copy(end, txt[3:])
 		d.buffer.Reset()
-		end := []byte(txt[3:])
 
 		for {
-			err = d.readUntil(runeFunc(isSymbolic), true, nil)
+			err = d.readUntilBuffer(runeFunc(isSymbolic))
 			buf := d.buffer.Bytes()
 			if (err == io.EOF || err == nil) && bytes.HasSuffix(buf, end) {
 				buf = buf[:len(buf)-len(end)]
@@ -318,12 +349,11 @@ symbol:
 			}
 			d.buffer.WriteRune(d.current)
 		}
-
 	} else {
 		a = skim.Symbol(txt)
 	}
 
-	return d.assign(a, false, d.readSyntax, nil)
+	return d.assign(a)
 }
 
 func (d *decoder) closeList() (next nextfunc, err error) {
@@ -334,9 +364,11 @@ func (d *decoder) closeList() (next nextfunc, err error) {
 
 	if err == io.EOF {
 		err = nil
+	} else if err != nil {
+		return nil, err
 	}
 
-	return d.close(d.readSyntax, err)
+	return d.close()
 }
 
 func (d *decoder) unimplemented() (nextfunc, error) {
@@ -349,7 +381,7 @@ func (d *decoder) readList() (next nextfunc, err error) {
 }
 
 func (d *decoder) push(open bool) *scope {
-	s := newScope(d.last, open)
+	s := newScope(d.last, open, d.allocPair)
 	d.last = s
 	return d.last
 }
@@ -381,14 +413,19 @@ func (d *decoder) start() (next nextfunc, err error) {
 }
 
 func (d *decoder) readComment() (next nextfunc, err error) {
-	defer stopOnEOF(&next, &err)
-	return d.readSyntax, d.readUntil(oneRune(rNewline), true, nil)
+	if err = d.readUntilBuffer(oneRune(rNewline)); err == io.EOF {
+		return nil, nil
+	}
+	return d.readSyntax, err
 }
 
 func (d *decoder) reset(r io.Reader) {
-	const defaultBufferCap = 64
+	const (
+		defaultPairbufSize = 16
+		defaultBufferCap   = 64
+	)
 
-	d.root = *newScope(nil, false)
+	d.root.reset(nil, false, d.allocPair)
 	d.last = &d.root
 
 	if rx, ok := r.(runeReader); ok {
@@ -409,6 +446,11 @@ func (d *decoder) reset(r io.Reader) {
 
 	d.havenext = false
 	d.nexterr = nil
+
+	if d.pairbufSize <= 0 {
+		d.pairbufSize = defaultPairbufSize
+	}
+	d.pairbufHead, d.pairbuf = 0, nil
 }
 
 func Read(r io.Reader) (*skim.Cons, error) {
@@ -424,12 +466,24 @@ func (d *decoder) Read(r io.Reader) (*skim.Cons, error) {
 	root := d.root.cons()
 	d.root, d.last = scope{}, &d.root
 	d.buffer.Reset()
+	d.pairbufHead, d.pairbuf = 0, nil
 
 	return root, nil
 }
 
 func (d *decoder) read() (err error) {
-	defer panictoerr(&err)
+	defer func() {
+		rc := recover()
+		if perr, ok := rc.(error); ok {
+			err = perr
+		} else if rc != nil {
+			err = fmt.Errorf("skim: panic: %v", rc)
+		}
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+	}()
+
 	var next nextfunc = d.start
 	for next != nil && err == nil {
 		next, err = next()
@@ -450,29 +504,36 @@ func (d *decoder) syntaxerr(err error, msg ...interface{}) *SyntaxError {
 
 func isHorizSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\r' }
 
-func (d *decoder) skipSpace(newlines bool) error {
+func (d *decoder) skipSpace(newlines bool) (err error) {
 	fn := unicode.IsSpace
 	if !newlines {
 		fn = isHorizSpace
 	}
 
-	if fn(d.current) {
-		return d.readUntil(notRune(runeFunc(fn)), false, nil)
+	if !fn(d.current) {
+		return nil
 	}
-	return nil
+
+	var r rune
+	for {
+		r, _, err = d.nextRune()
+		if err != nil {
+			return err
+		} else if !fn(r) {
+			return nil
+		}
+	}
+	return err
 }
 
 func (d *decoder) nextRune() (r rune, size int, err error) {
 	if d.err != nil {
-		return d.current, utf8.RuneLen(d.current), d.err
+		return 0, 1, d.err
 	}
 
-	if d.havenext {
-		r, size, err = d.peekRune()
-		d.havenext = false
-	} else if d.readrune != nil {
+	if d.readrune != nil {
 		r, size, err = d.readrune()
-	} else {
+	} else { // slow fallback
 		r, size, err = readrune(d.rd)
 	}
 
@@ -496,75 +557,16 @@ func (d *decoder) skip() error {
 	return err
 }
 
-func (d *decoder) peekRune() (r rune, size int, err error) {
-	if d.havenext {
-		r = d.next
-		size = utf8.RuneLen(r)
-		return r, size, d.nexterr
-	}
-
-	// Even if there's an error.
-	d.havenext = true
-	if d.readrune != nil {
-		r, size, err = d.readrune()
-	} else {
-		r, size, err = readrune(d.rd)
-	}
-	d.next, d.nexterr = r, err
-	return r, size, err
-}
-
-func (d *decoder) readUntil(oneof runeset, buffer bool, runemap func(rune) rune) (err error) {
+func (d *decoder) readUntilBuffer(oneof runeset) (err error) {
+	var r rune
 	for out := &d.buffer; ; {
-		var r rune
 		r, _, err = d.nextRune()
 		if err != nil {
 			return err
 		} else if oneof.Contains(r) {
 			return nil
-		} else if buffer {
-			if runemap != nil {
-				r = runemap(r)
-			}
-			if r >= 0 {
-				out.WriteRune(r)
-			}
 		}
-	}
-}
-
-func must(err error, allowed ...error) error {
-	if err == nil {
-		return err
-	}
-
-	for _, e := range allowed {
-		if e == err {
-			return err
-		}
-	}
-
-	panic(err)
-}
-
-func stopOnEOF(next *nextfunc, err *error) {
-	if *err == io.EOF {
-		*next = nil
-		*err = nil
-	}
-}
-
-// Recover from unexpected errors
-func panictoerr(err *error) {
-	rc := recover()
-	if perr, ok := rc.(error); ok {
-		*err = perr
-	} else if rc != nil {
-		*err = fmt.Errorf("skim: panic: %v", rc)
-	}
-
-	if *err == io.EOF {
-		*err = io.ErrUnexpectedEOF
+		out.WriteRune(r)
 	}
 }
 
@@ -601,10 +603,6 @@ type (
 	runeFunc func(rune) bool
 	runestr  string
 )
-
-func notRune(runes runeset) runeset {
-	return runeFunc(func(r rune) bool { return !runes.Contains(r) })
-}
 
 func (s runestr) Contains(r rune) bool { return strings.ContainsRune(string(s), r) }
 

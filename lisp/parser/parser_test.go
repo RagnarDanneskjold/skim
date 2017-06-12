@@ -106,6 +106,14 @@ func TestParse(t *testing.T) {
 			in:  "+0.0",
 			out: skim.List(skim.Float(+0.0)),
 		},
+		"symbol/hex-like": {
+			in:  "0xfoobar",
+			out: skim.List(skim.Symbol("0xfoobar")),
+		},
+		"symbol/#foobar": {
+			in:  "#foobar",
+			out: skim.List(skim.Symbol("#foobar")),
+		},
 		"heredoc/lines": {
 			in: `(<<<---EOF
 		Foobar
