@@ -7,9 +7,17 @@ import (
 	"go.spiff.io/skim/lisp/skim"
 )
 
+type unbound struct{}
+
+func (unbound) SkimAtom()      {}
+func (unbound) String() string { return "#unbound" }
+
+var Unbound = unbound{}
+
 type Context struct {
-	up    *Context
-	table map[skim.Symbol]skim.Atom
+	up *Context
+	// table is the set of values bound to symbols in this scope and descendant scopes.
+	table map[skim.Symbol]skim.Atom // inherited
 
 	// upval is the table of upvalues names to opaque values (empty interfaces). These are used
 	// as private data held by the current context, in the event that there is shared
@@ -45,14 +53,27 @@ func (c *Context) BindProc(name skim.Symbol, proc Proc) *Context {
 func (c *Context) Unbind(name skim.Symbol) bool {
 	_, ok := c.table[name]
 	if ok {
-		delete(c.table, name)
+		c.table[name] = Unbound
 	}
 	return ok
 }
 
+func resolveInTable(name skim.Symbol, table map[skim.Symbol]skim.Atom) (value skim.Atom, bound, ok bool) {
+	if value, ok = table[name]; !ok {
+		return value, false, ok
+	}
+	bound = true
+	if value == Unbound { // value is occluded in this context
+		value, ok = nil, false
+	}
+	return value, bound, ok
+}
+
 func (c *Context) Resolve(name skim.Symbol) (value skim.Atom, ok bool) {
+	var bound bool
 	for ; c != nil; c = c.up {
-		if value, ok = c.table[name]; ok {
+		value, bound, ok = resolveInTable(name, c.table)
+		if bound {
 			return
 		}
 	}

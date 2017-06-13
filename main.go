@@ -24,6 +24,7 @@ func main() {
 	builtins.BindCore(ctx)
 	builtins.BindDisplay(ctx)
 	builtins.BindArithmetic(ctx)
+	builtins.BindMutative(ctx)
 	skim.Walk(roots, func(a skim.Atom) error {
 		pre := fmt.Sprintf("; %#v\n", a)
 		post := fmt.Sprintf("%v ; => ", a)
