@@ -177,6 +177,24 @@ func (c *Cons) GoString() string {
 	return "(" + fmtgostring(c.Car) + " . " + fmtgostring(c.Cdr) + ")"
 }
 
+type Vector []Atom
+
+func (Vector) SkimAtom()          {}
+func (v Vector) String() string   { return v.format(fmtstring) }
+func (v Vector) GoString() string { return v.format(fmtgostring) }
+
+func (v Vector) format(format func(interface{}) string) string {
+	vs := "["
+	for i, a := range v {
+		if i > 0 {
+			vs += " "
+		}
+		vs += format(a)
+	}
+	vs += "]"
+	return vs
+}
+
 type String string
 
 func (String) SkimAtom()          {}
@@ -211,18 +229,31 @@ type Visitor func(Atom) (Visitor, error)
 
 // Traverse will recursively visit all cons pairs and left and right elements, in order. Traversal
 // ends when a visitor returns a nil visitor for nested elements and all adjacent and upper elements
-// are traversed.
+// are traversed. If a Vector is encountered, the vector itself is passed to the visitor function
+// followed by its elements (passed to the visitor returned for the Vector).
 func Traverse(a Atom, visitor Visitor) (err error) {
 traverseCdr:
 	if IsNil(a) {
 		return nil
 	}
 
-	visitor, err = visitor(a)
-	if err != nil {
-		return err
-	} else if visitor == nil {
+	if vec, ok := a.(Vector); ok {
+		visitor, err = visitor(a)
+		if visitor == nil || err != nil {
+			return err
+		}
+
+		for _, a := range vec {
+			if err = Traverse(a, visitor); err != nil {
+				return err
+			}
+		}
 		return nil
+	}
+
+	visitor, err = visitor(a)
+	if visitor == nil || err != nil {
+		return err
 	}
 
 	cons, _ := a.(*Cons)
@@ -243,8 +274,18 @@ traverseCdr:
 
 // Walk recursively visits all cons pairs in a singly-linked list, calling fn for the car of each
 // cons pair and walking through each cdr it encounters a nil cdr. If a cdr is encountered that is
-// neither a cons pair nor nil, Walk returns an error.
+// neither a cons pair nor nil, Walk returns an error. If the atom, a, is a Vector, it will call fn
+// for each element of the vector.
 func Walk(a Atom, fn func(Atom) error) error {
+	if vec, ok := a.(Vector); ok {
+		for _, elem := range vec {
+			if err := fn(elem); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	for {
 		switch cons := a.(type) {
 		case nil:

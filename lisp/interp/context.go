@@ -141,17 +141,6 @@ func (c *Context) Eval(a skim.Atom) (result skim.Atom, err error) {
 		}()
 
 		return proc(c, argv)
-
-	case Proc:
-		return a, nil
-	case skim.Bool:
-		return a, nil
-	case skim.Int:
-		return a, nil
-	case skim.Float:
-		return a, nil
-	case skim.String:
-		return a, nil
 	case skim.Symbol:
 		v, ok := c.Resolve(a)
 		if !ok {
@@ -162,5 +151,5 @@ func (c *Context) Eval(a skim.Atom) (result skim.Atom, err error) {
 		return nil, nil
 	}
 
-	return nil, fmt.Errorf("unsupported execution atom: %T", a)
+	return a, nil
 }

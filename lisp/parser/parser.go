@@ -41,14 +41,18 @@ func (s *scope) reset(up *scope, open bool, newPair func() *skim.Cons) {
 	}
 }
 
-func (s *scope) cons() *skim.Cons {
+func (s *scope) cons() skim.Atom {
 	if s.head == nil {
 		return s.newPair()
 	}
-	return s.head.(*skim.Cons)
+	return s.head
 }
 
 func (s *scope) append(tip skim.Atom) {
+	if v, ok := s.head.(skim.Vector); ok {
+		s.head = append(v, tip)
+		return
+	}
 	next := s.newPair()
 	next.Car, *s.cdr, s.cdr = tip, next, &next.Cdr
 }
@@ -81,14 +85,16 @@ type decoder struct {
 }
 
 const (
-	rNewline    = '\n'
-	rComment    = ';'
-	rOpenParen  = '('
-	rCloseParen = ')'
-	rString     = '"'
-	rQuote      = '\''
-	rBacktick   = '`'
-	rComma      = ','
+	rNewline      = '\n'
+	rComment      = ';'
+	rOpenParen    = '('
+	rCloseParen   = ')'
+	rOpenBracket  = '['
+	rCloseBracket = ']'
+	rString       = '"'
+	rQuote        = '\''
+	rBacktick     = '`'
+	rComma        = ','
 )
 
 func (d *decoder) allocPair() *skim.Cons {
@@ -125,6 +131,10 @@ func (d *decoder) readSyntax() (next nextfunc, err error) {
 		return d.readLiteral()
 	case rString:
 		return d.readString()
+	case rOpenBracket:
+		return d.readVector()
+	case rCloseBracket:
+		return d.closeVector()
 	default:
 		return d.readSymbol()
 	}
@@ -200,7 +210,7 @@ func (d *decoder) readString() (next nextfunc, err error) {
 	return d.readSyntax, err
 }
 
-var sentinelRunes = runestr("()'\",`;")
+var sentinelRunes = runestr("()[]'\",`;")
 
 func isSymbolic(r rune) bool {
 	return unicode.IsSpace(r) || sentinelRunes.Contains(r)
@@ -356,12 +366,27 @@ symbol:
 	return d.assign(a)
 }
 
-func (d *decoder) closeList() (next nextfunc, err error) {
+func (d *decoder) closeVector() (next nextfunc, err error) {
+	if _, ok := d.last.head.(skim.Vector); !ok || !d.last.open {
+		return nil, d.syntaxerr(BadCharError(']'))
+	}
+
 	err = d.skip()
-	if !d.last.open {
+	if err == io.EOF {
+		err = nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return d.close()
+}
+
+func (d *decoder) closeList() (next nextfunc, err error) {
+	if _, ok := d.last.head.(*skim.Cons); (!ok && d.last.head != nil) || !d.last.open {
 		return nil, d.syntaxerr(BadCharError(')'))
 	}
 
+	err = d.skip()
 	if err == io.EOF {
 		err = nil
 	} else if err != nil {
@@ -377,6 +402,12 @@ func (d *decoder) unimplemented() (nextfunc, error) {
 
 func (d *decoder) readList() (next nextfunc, err error) {
 	d.push(scopeBraced)
+	return d.readSyntax, d.skip()
+}
+
+func (d *decoder) readVector() (next nextfunc, err error) {
+	d.push(scopeBraced)
+	d.last.head = skim.Vector{}
 	return d.readSyntax, d.skip()
 }
 
@@ -426,6 +457,7 @@ func (d *decoder) reset(r io.Reader) {
 	)
 
 	d.root.reset(nil, false, d.allocPair)
+	d.root.head = skim.Vector(nil)
 	d.last = &d.root
 
 	if rx, ok := r.(runeReader); ok {
@@ -453,22 +485,22 @@ func (d *decoder) reset(r io.Reader) {
 	d.pairbufHead, d.pairbuf = 0, nil
 }
 
-func Read(r io.Reader) (*skim.Cons, error) {
+func Read(r io.Reader) (skim.Vector, error) {
 	var dec decoder
 	return dec.Read(r)
 }
 
-func (d *decoder) Read(r io.Reader) (*skim.Cons, error) {
+func (d *decoder) Read(r io.Reader) (skim.Vector, error) {
 	d.reset(r)
 	if err := d.read(); err != nil {
 		return nil, err
 	}
 	root := d.root.cons()
-	d.root, d.last = scope{}, &d.root
+	d.root, d.last = scope{head: skim.Vector(nil)}, &d.root
 	d.buffer.Reset()
 	d.pairbufHead, d.pairbuf = 0, nil
 
-	return root, nil
+	return root.(skim.Vector), nil
 }
 
 func (d *decoder) read() (err error) {
