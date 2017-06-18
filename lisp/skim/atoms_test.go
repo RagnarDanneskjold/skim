@@ -52,8 +52,8 @@ func TestCadr(t *testing.T) {
 		err  error
 	}
 
-	carErr := errors.New("car: skim.Int is not a Cons")
-	cdrErr := errors.New("cdr: skim.Int is not a Cons")
+	carErr := errors.New("skim: car: skim.Int is not a *Cons")
+	cdrErr := errors.New("skim: cdr: skim.Int is not a *Cons")
 	cases := map[string]testCase{
 		// If the following work, the rest should follow
 		"Car":    {fn: Car, in: nestl1, want: List(Int(1))},

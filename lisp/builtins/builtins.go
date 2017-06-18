@@ -1,7 +1,6 @@
 package builtins
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,50 +9,19 @@ import (
 	"go.spiff.io/skim/lisp/skim"
 )
 
-// MapFunc is a function used to map an atom to another atom. It may return an error, in which case
-// the caller should assume the result atom is unusable unless documented otherwise for special uses
-// of a specific MapFunc.
-type MapFunc func(skim.Atom) (skim.Atom, error)
-
-func (fn MapFunc) Map(atom skim.Atom) (skim.Atom, error) {
-	if fn == nil {
-		return nil, errors.New("map: MapFunc is nil")
-	}
-	return fn(atom)
-}
-
-// Map iterates over a list and maps its values using mapfn. It returns a new list with the mapped
-// values. The input list must be, strictly, a list -- that is, all Cdrs of the input list must
-// either be nil or another cons cell meeting the same criteria.
-func Map(list *skim.Cons, mapfn MapFunc) (*skim.Cons, error) {
-	if list == nil {
-		return nil, nil
-	}
-
-	var root skim.Atom
-	var cdr *skim.Atom = &root
-	err := skim.Walk(list, func(a skim.Atom) (err error) {
-		if a, err = mapfn.Map(a); err != nil {
-			return err
-		}
-
-		next := &skim.Cons{Car: a}
-		*cdr, cdr = next, &next.Cdr
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-	return root.(*skim.Cons), nil
-}
-
 // Expand expands the values by evaluating each value in the scope of the interpreter context, ctx.
 // It returns a new list with the expanded values.
 //
-// This is a convenience function for Map(list, ctx.Eval).
+// This is a convenience function for skim.Map(list, ctx.Eval).
 func Expand(ctx *interp.Context, list *skim.Cons) (*skim.Cons, error) {
-	return Map(list, ctx.Eval)
+	if list == nil {
+		return nil, nil
+	}
+	m, err := skim.Map(list, ctx.Eval)
+	if err != nil {
+		return nil, err
+	}
+	return m.(*skim.Cons), nil
 }
 
 // Expanded returns a new Proc that will invoke fn with expanded values of its form when called.

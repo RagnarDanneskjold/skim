@@ -177,6 +177,39 @@ func (c *Cons) GoString() string {
 	return "(" + fmtgostring(c.Car) + " . " + fmtgostring(c.Cdr) + ")"
 }
 
+func (c *Cons) Map(fn MapFunc) (result Atom, err error) {
+	if c == nil { // typed nil - distinct from Atom(nil)
+		return nil, nil
+	}
+
+	n := 1
+	for counter := c; counter.Cdr != nil; {
+		n++
+		if counter.Cdr == nil {
+			break
+		} else if next, ok := counter.Cdr.(*Cons); ok {
+			counter = next
+		} else {
+			return nil, fmt.Errorf("skim: map: cannot map a list with a Cdr of %T", counter.Cdr)
+		}
+	}
+
+	var (
+		mapped = make([]Cons, n)
+		pred   = &result
+	)
+	for i := range mapped {
+		mpair := &mapped[i]
+		if mpair.Car, err = fn.Map(c.Car); err != nil {
+			return nil, err
+		}
+		*pred, pred = mpair, &mpair.Cdr
+		c, _ = c.Cdr.(*Cons)
+	}
+
+	return result, nil
+}
+
 type Vector []Atom
 
 func (Vector) SkimAtom()          {}
@@ -193,6 +226,20 @@ func (v Vector) format(format func(interface{}) string) string {
 	}
 	vs += "]"
 	return vs
+}
+
+func (v Vector) Map(fn MapFunc) (result Atom, err error) {
+	if v == nil { // typed nil - distinct from Atom(nil)
+		return Vector(nil), nil
+	}
+
+	mapped := make(Vector, len(v))
+	for i, a := range v {
+		if mapped[i], err = fn.Map(a); err != nil {
+			return nil, err
+		}
+	}
+	return mapped, nil
 }
 
 type String string
@@ -214,13 +261,13 @@ func (b Bool) String() string {
 func Pair(a Atom) (lhs, rhs Atom, err error) {
 	la, ok := a.(*Cons)
 	if !ok || la == nil {
-		return nil, nil, errors.New("skim: (car atom) is not a cons cell")
+		return nil, nil, errors.New("skim: (car atom) is not a *Cons")
 	}
 	ra, ok := la.Cdr.(*Cons)
 	if !ok || ra == nil {
-		return nil, nil, errors.New("skim: (cdr atom) is not a cons cell")
+		return nil, nil, errors.New("skim: (cdr atom) is not a *Cons")
 	} else if ra.Cdr != nil {
-		return nil, nil, errors.New("skim: (cdr atom) is not a pair")
+		return nil, nil, errors.New("skim: (cdr atom) is not a *Cons of the form (a . (b . #nil))")
 	}
 	return la.Car, ra.Car, nil
 }
@@ -301,7 +348,7 @@ func Walk(a Atom, fn func(Atom) error) error {
 			}
 			a = cons.Cdr
 		default:
-			return fmt.Errorf("cannot walk %T", a)
+			return fmt.Errorf("skim: cannot walk %T", a)
 		}
 	}
 }
@@ -328,7 +375,7 @@ func cadr(a Atom, seq string) (Atom, error) {
 		op = seq[i]
 		c, _ = a.(*Cons)
 		if c == nil {
-			return nil, fmt.Errorf("c%cr: %T is not a Cons", op, a)
+			return nil, fmt.Errorf("skim: c%cr: %T is not a *Cons", op, a)
 		} else if op == 'a' {
 			a = c.Car
 		} else {
@@ -341,7 +388,7 @@ func cadr(a Atom, seq string) (Atom, error) {
 func Car(a Atom) (Atom, error) {
 	c, _ := a.(*Cons)
 	if c == nil {
-		return nil, fmt.Errorf("car: %T is not a Cons", a)
+		return nil, fmt.Errorf("skim: car: %T is not a *Cons", a)
 	}
 	return c.Car, nil
 }
@@ -349,7 +396,7 @@ func Car(a Atom) (Atom, error) {
 func Cdr(a Atom) (Atom, error) {
 	c, _ := a.(*Cons)
 	if c == nil {
-		return nil, fmt.Errorf("cdr: %T is not a Cons", a)
+		return nil, fmt.Errorf("skim: cdr: %T is not a *Cons", a)
 	}
 	return c.Cdr, nil
 }
@@ -382,3 +429,34 @@ func Cddaar(a Atom) (Atom, error) { return cadr(a, "ddaa") }
 func Cddadr(a Atom) (Atom, error) { return cadr(a, "ddad") }
 func Cdddar(a Atom) (Atom, error) { return cadr(a, "ddda") }
 func Cddddr(a Atom) (Atom, error) { return cadr(a, "dddd") }
+
+// MapFunc is a function used to map an atom to another atom. It may return an error, in which case
+// the caller should assume the result atom is unusable unless documented otherwise for special uses
+// of a specific MapFunc.
+type MapFunc func(Atom) (Atom, error)
+
+func (fn MapFunc) Map(atom Atom) (Atom, error) {
+	if fn == nil {
+		return nil, errors.New("skim: MapFunc is nil")
+	}
+	return fn(atom)
+}
+
+type Mapper interface {
+	Map(MapFunc) (Atom, error)
+}
+
+// Map iterates over a list and maps its values using mapfn. It returns a new list with the mapped
+// values. The input list must be, strictly, a list -- that is, all Cdrs of the input list must
+// either be nil or another cons cell meeting the same criteria.
+func Map(list Atom, mapfn MapFunc) (result Atom, err error) {
+	if list == nil {
+		return nil, nil
+	}
+
+	m, ok := list.(Mapper)
+	if !ok {
+		return nil, fmt.Errorf("skim: cannot map %T; does not implement Mapper")
+	}
+	return m.Map(mapfn)
+}
