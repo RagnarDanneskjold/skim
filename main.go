@@ -25,19 +25,19 @@ func main() {
 	builtins.BindDisplay(ctx)
 	builtins.BindArithmetic(ctx)
 	builtins.BindMutative(ctx)
+	first := true
 	skim.Walk(roots, func(a skim.Atom) error {
-		pre := fmt.Sprintf("; %#v\n", a)
-		post := fmt.Sprintf("%v ; => ", a)
-		v, err := ctx.Eval(a)
-		if err != nil {
-			post += fmt.Sprintf("ERR: %v\n", err)
-		} else {
-			post += fmt.Sprintf("%v\n", v)
+		if !first {
+			fmt.Println("")
 		}
-
-		fmt.Print(pre, post)
-		fmt.Println("")
-
+		first = false
+		fmt.Printf("; %#v\n%v\n", a, a)
+		v, err := ctx.Eval(a)
+		var next interface{} = v
+		if err != nil {
+			next = err
+		}
+		fmt.Printf("; => %v\n; [D] => %#v\n", next, next)
 		return nil
 	})
 }

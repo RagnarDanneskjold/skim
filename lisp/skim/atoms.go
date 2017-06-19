@@ -22,6 +22,22 @@ type Numeric interface {
 	Float64() (float64, bool)
 }
 
+// Dupper is an interface for cloneable atoms. The Dup method returns a deep clone of an atom. Any
+// atom not implementing this is assumed to be un-clone-able and should be treated as a value (i.e.,
+// does not need to be cloned).
+type Dupper interface {
+	Atom
+
+	Dup() Atom
+}
+
+func Dup(a Atom) Atom {
+	if a, ok := a.(Dupper); ok {
+		return a.Dup()
+	}
+	return a
+}
+
 type goStringer interface {
 	GoString() string
 }
@@ -106,6 +122,43 @@ func IsNil(a Atom) bool {
 	default:
 		return false
 	}
+}
+
+func (c *Cons) Dup() Atom {
+	if c == nil {
+		return nil
+	}
+
+	n := 1
+	for counter := c; counter.Cdr != nil; {
+		n++
+		if counter.Cdr == nil {
+			break
+		} else if next, ok := counter.Cdr.(*Cons); ok {
+			counter = next
+		} else {
+			break
+		}
+	}
+
+	var (
+		result Atom
+		dupd   = make([]Cons, n)
+		pred   = &result
+	)
+	for i := range dupd {
+		dpair := &dupd[i]
+		dpair.Car = Dup(c.Car)
+		*pred, pred = dpair, &dpair.Cdr
+		if next, ok := c.Cdr.(*Cons); ok {
+			c = next
+		} else {
+			dpair.Cdr = Dup(c.Cdr)
+			break
+		}
+	}
+
+	return result
 }
 
 func (*Cons) SkimAtom() {}
@@ -226,6 +279,14 @@ func (v Vector) format(format func(interface{}) string) string {
 	}
 	vs += "]"
 	return vs
+}
+
+func (v Vector) Dup() Atom {
+	d := make(Vector, len(v))
+	for i, a := range v {
+		d[i] = Dup(a)
+	}
+	return d
 }
 
 func (v Vector) Map(fn MapFunc) (result Atom, err error) {

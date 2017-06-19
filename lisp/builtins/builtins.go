@@ -57,7 +57,7 @@ func letform(eval, bind *interp.Context, form *skim.Cons) (result skim.Atom, err
 			return fmt.Errorf("expected symbol, got %T", l)
 		}
 
-		r, err = eval.Eval(r)
+		r, err = eval.Fork().Eval(r)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func letform(eval, bind *interp.Context, form *skim.Cons) (result skim.Atom, err
 		return nil, err
 	}
 
-	err = skim.Walk(form.Cdr, func(a skim.Atom) error {
+	err = skim.Walk(form.Cdr, func(a skim.Atom) (err error) {
 		result, err = bind.Eval(a)
 		return err
 	})
@@ -260,6 +260,7 @@ func BindCore(ctx *interp.Context) {
 	ctx.BindProc("cond", Cond)
 	ctx.BindProc("and", LogAnd)
 	ctx.BindProc("or", LogOr)
+	ctx.BindProc("lambda", newLambda)
 }
 
 func BindDisplay(ctx *interp.Context) {
